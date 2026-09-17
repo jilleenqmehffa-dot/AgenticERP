@@ -1,11 +1,15 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy import CheckConstraint, DateTime, Enum, Numeric, String, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import SalesOrderStatus
 from app.db.base import Base
+
+if TYPE_CHECKING:
+    from app.models.sales_order_item import SalesOrderItem
 
 
 class SalesOrder(Base):
@@ -37,4 +41,8 @@ class SalesOrder(Base):
         DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
+    )
+    items: Mapped[list["SalesOrderItem"]] = relationship(
+        back_populates="sales_order",
+        cascade="all, delete-orphan",
     )
