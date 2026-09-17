@@ -2,6 +2,8 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.product import ProductRead
+
 
 class SalesOrderItemBase(BaseModel):
     product_id: int = Field(gt=0)
@@ -26,4 +28,4 @@ class SalesOrderItemRead(SalesOrderItemBase):
 
     id: int
     sales_order_id: int
-
+    product: ProductRead

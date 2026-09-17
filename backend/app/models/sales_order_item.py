@@ -19,10 +19,13 @@ class SalesOrderItem(Base):
         ForeignKey("sales_orders.id", ondelete="CASCADE"),
         index=True,
     )
-    product_id: Mapped[int] = mapped_column(index=True)
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id"),
+        index=True,
+    )
     quantity: Mapped[Decimal] = mapped_column(Numeric(18, 3))
     unit_price: Mapped[Decimal] = mapped_column(Numeric(18, 2))
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2))
 
     sales_order: Mapped["SalesOrder"] = relationship(back_populates="items")
-
+    product: Mapped["Product"] = relationship(back_populates="sales_order_items")

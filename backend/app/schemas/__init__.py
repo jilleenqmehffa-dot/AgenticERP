@@ -1,3 +1,4 @@
+from app.schemas.product import ProductCreate, ProductRead, ProductUpdate
 from app.schemas.sales_order import (
     SalesOrderCreate,
     SalesOrderRead,
@@ -10,6 +11,9 @@ from app.schemas.sales_order_item import (
 )
 
 __all__ = [
+    "ProductCreate",
+    "ProductRead",
+    "ProductUpdate",
     "SalesOrderCreate",
     "SalesOrderItemCreate",
     "SalesOrderItemRead",
