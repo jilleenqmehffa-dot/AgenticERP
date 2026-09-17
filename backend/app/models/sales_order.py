@@ -1,9 +1,10 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, DateTime, Numeric, String, func
+from sqlalchemy import CheckConstraint, DateTime, Enum, Numeric, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.enums import SalesOrderStatus
 from app.db.base import Base
 
 
@@ -16,7 +17,17 @@ class SalesOrder(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     order_no: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     customer_name: Mapped[str] = mapped_column(String(255))
-    status: Mapped[str] = mapped_column(String(32), default="pending", server_default="pending")
+    status: Mapped[SalesOrderStatus] = mapped_column(
+        Enum(
+            SalesOrderStatus,
+            name="sales_order_status",
+            native_enum=False,
+            create_constraint=True,
+            validate_strings=True,
+        ),
+        default=SalesOrderStatus.DRAFT,
+        server_default=SalesOrderStatus.DRAFT.value,
+    )
     total_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0.00"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -27,4 +38,3 @@ class SalesOrder(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
-
