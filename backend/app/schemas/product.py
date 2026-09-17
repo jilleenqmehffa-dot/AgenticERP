@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.enums import ProductStatus
+from app.schemas.inventory import InventoryRead
 
 
 class ProductBase(BaseModel):
@@ -32,3 +33,6 @@ class ProductRead(ProductBase):
     created_at: datetime
     updated_at: datetime
 
+
+class ProductWithInventoriesRead(ProductRead):
+    inventories: list[InventoryRead] = Field(default_factory=list)
