@@ -1,0 +1,10 @@
+from enum import StrEnum
+
+
+class SalesOrderStatus(StrEnum):
+    DRAFT = "DRAFT"
+    CONFIRMED = "CONFIRMED"
+    PARTIALLY_FULFILLED = "PARTIALLY_FULFILLED"
+    FULFILLED = "FULFILLED"
+    CANCELLED = "CANCELLED"
+
