@@ -8,6 +8,7 @@ from app.core.enums import ProductStatus
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from app.models.inventory import Inventory
     from app.models.sales_order_item import SalesOrderItem
 
 
@@ -43,3 +44,4 @@ class Product(Base):
     sales_order_items: Mapped[list["SalesOrderItem"]] = relationship(
         back_populates="product",
     )
+    inventories: Mapped[list["Inventory"]] = relationship(back_populates="product")
