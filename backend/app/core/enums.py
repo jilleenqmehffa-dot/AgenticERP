@@ -19,3 +19,8 @@ class InventoryStatus(StrEnum):
     NORMAL = "NORMAL"
     LOW_STOCK = "LOW_STOCK"
     OUT_OF_STOCK = "OUT_OF_STOCK"
+
+
+class MovementType(StrEnum):
+    IN = "IN"
+    OUT = "OUT"

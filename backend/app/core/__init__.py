@@ -1,4 +1,11 @@
-from app.core.enums import InventoryStatus, ProductStatus, SalesOrderStatus
+from app.core.enums import (
+    InventoryStatus,
+    MovementType,
+    ProductStatus,
+    SalesOrderStatus,
+)
 
-__all__ = ["InventoryStatus", "ProductStatus", "SalesOrderStatus"]
-
+__all__ = [
+    "InventoryStatus",
+    "MovementType",
+    "ProductStatus",
