@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 from app.db.base import Base
 from app.models import (  # noqa: F401
+    AccountPayable,
+    AccountReceivable,
     Inventory,
     Product,
     SalesOrder,

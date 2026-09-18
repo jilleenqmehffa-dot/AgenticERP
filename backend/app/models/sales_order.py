@@ -9,6 +9,7 @@ from app.core.enums import SalesOrderStatus
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from app.models.account_receivable import AccountReceivable
     from app.models.sales_order_item import SalesOrderItem
 
 
@@ -45,4 +46,8 @@ class SalesOrder(Base):
     items: Mapped[list["SalesOrderItem"]] = relationship(
         back_populates="sales_order",
         cascade="all, delete-orphan",
+    )
+    receivable: Mapped["AccountReceivable | None"] = relationship(
+        back_populates="sales_order",
+        uselist=False,
     )

@@ -24,3 +24,17 @@ class InventoryStatus(StrEnum):
 class MovementType(StrEnum):
     IN = "IN"
     OUT = "OUT"
+
+
+class ReceivableStatus(StrEnum):
+    UNPAID = "UNPAID"
+    PARTIALLY_PAID = "PARTIALLY_PAID"
+    PAID = "PAID"
+    OVERDUE = "OVERDUE"
+
+
+class PayableStatus(StrEnum):
+    UNPAID = "UNPAID"
+    PARTIALLY_PAID = "PARTIALLY_PAID"
+    PAID = "PAID"
+    OVERDUE = "OVERDUE"

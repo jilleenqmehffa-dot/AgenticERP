@@ -4,6 +4,7 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.enums import SalesOrderStatus
+from app.schemas.account_receivable import AccountReceivableRead
 from app.schemas.sales_order_item import SalesOrderItemRead
 
 
@@ -31,3 +32,4 @@ class SalesOrderRead(SalesOrderBase):
     created_at: datetime
     updated_at: datetime
     items: list[SalesOrderItemRead] = Field(default_factory=list)
+    receivable: AccountReceivableRead | None = None
