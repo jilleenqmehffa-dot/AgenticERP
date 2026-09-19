@@ -287,80 +287,115 @@ status = LOW_STOCK
 
 ------------------------------------------------------------------------
 
-# Module 4：库存阈值判断与状态自动更新
+# Module 4：库存计算与状态判断规则
 
 ## 目标
 
-建立 V1 第一条确定性的 ERP 库存业务规则。
+建立 V1 第一组确定性的 ERP 库存领域规则。
 
-任何合法库存变化完成后，系统自动重新计算库存状态。
+本 Module **不负责修改库存，也不实现正式的出库 / 入库 Service**。
 
-## 基础规则
+本阶段只负责定义：
 
-``` python
-available = on_hand_quantity - reserved_quantity
+1. 可用库存如何计算。
+2. 库存状态如何根据可用库存与库存阈值确定。
 
-if available <= 0:
+真正的库存变化以及库存变化后自动触发状态重新计算，将在 **Module 5 的 `InventoryService`** 中实现。
+
+---
+
+## 1. 可用库存计算
+
+统一定义：
+
+```python
+available_quantity = on_hand_quantity - reserved_quantity
+```
+
+建议实现独立规则函数：
+
+```python
+def calculate_available(
+    on_hand_quantity: int,
+    reserved_quantity: int,
+) -> int:
+    return on_hand_quantity - reserved_quantity
+```
+
+其中：
+
+* `on_hand_quantity`：当前实际账面库存。
+* `reserved_quantity`：已经被其他业务预留的库存。
+* `available_quantity`：当前仍然可以被新业务使用的库存。
+
+---
+
+## 2. 库存状态判断
+
+基础规则：
+
+```python
+if available_quantity <= 0:
     status = OUT_OF_STOCK
-elif available < low_stock_threshold:
+
+elif available_quantity < low_stock_threshold:
     status = LOW_STOCK
+
 else:
     status = NORMAL
 ```
 
-## 推荐职责
+建议实现统一的状态判断函数：
 
-状态判断统一由 `InventoryService` 或独立的库存领域规则函数负责。
+```python
+def evaluate_inventory_status(
+    available_quantity: int,
+    low_stock_threshold: int,
+) -> InventoryStatus:
 
-禁止出现：
+    if available_quantity <= 0:
+        return InventoryStatus.OUT_OF_STOCK
 
-``` text
-Router 判断一次
-Repository 判断一次
-其他 Service 再判断一次
+    if available_quantity < low_stock_threshold:
+        return InventoryStatus.LOW_STOCK
+
+    return InventoryStatus.NORMAL
 ```
 
-推荐流程：
+---
 
-``` text
-库存发生变化
-      ↓
-InventoryService
-      ↓
+## 3. 职责边界
+
+Module 4 只负责：
+
+```text
+库存数据
+   ↓
 calculate_available()
-      ↓
+   ↓
+可用库存
+   ↓
 evaluate_inventory_status()
-      ↓
-Repository
-      ↓
-Database
+   ↓
+InventoryStatus
 ```
 
-## 业务约束
+本 Module 不负责：
 
--   库存状态不能依赖客户端手动填写。
--   库存数量变化后必须重新计算状态。
--   状态判断逻辑必须只有一个权威实现。
--   `low_stock_threshold` 由系统数据决定，后续可扩展为按商品/仓库配置。
-
-## 完成标准
-
-例如：
-
-``` text
-available = 50
-threshold = 30
-→ NORMAL
-
-available = 20
-threshold = 30
-→ LOW_STOCK
-
-available = 0
-→ OUT_OF_STOCK
+```text
+stock_in()
+stock_out()
+数据库库存修改
+StockMovement
+库存事务
 ```
 
-库存发生变化后数据库中的状态自动保持一致。
+以上内容统一在 Module 5 实现。
+
+---
+
+## 4. 业务
+
 
 ------------------------------------------------------------------------
 
