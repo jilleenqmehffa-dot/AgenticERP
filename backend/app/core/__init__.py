@@ -1,4 +1,5 @@
 from app.core.enums import (
+    ActorType,
     EmployeeStatus,
     InventoryStatus,
     MovementType,
@@ -11,6 +12,7 @@ from app.core.enums import (
 )
 
 __all__ = [
+    "ActorType",
     "EmployeeStatus",
     "InventoryStatus",
     "MovementType",

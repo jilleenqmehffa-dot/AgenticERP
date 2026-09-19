@@ -13,6 +13,7 @@ from app.db.base import Base
 from app.models import (  # noqa: F401
     AccountPayable,
     AccountReceivable,
+    AuditLog,
     BusinessTask,
     Employee,
     Inventory,

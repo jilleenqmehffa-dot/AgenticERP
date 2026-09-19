@@ -1,5 +1,6 @@
 from app.models.account_payable import AccountPayable
 from app.models.account_receivable import AccountReceivable
+from app.models.audit_log import AuditLog
 from app.models.business_task import BusinessTask
 from app.models.employee import Employee
 from app.models.inventory import Inventory
@@ -13,6 +14,7 @@ __all__ = [
     "Inventory",
     "AccountPayable",
     "AccountReceivable",
+    "AuditLog",
     "BusinessTask",
     "Employee",
     "Product",

@@ -56,3 +56,9 @@ class TaskStatus(StrEnum):
 class TaskType(StrEnum):
     STOCK_IN = "STOCK_IN"
     STOCK_OUT = "STOCK_OUT"
+
+
+class ActorType(StrEnum):
+    EMPLOYEE = "EMPLOYEE"
+    SYSTEM = "SYSTEM"
+    AGENT = "AGENT"

@@ -8,6 +8,7 @@ from app.schemas.account_receivable import (
     AccountReceivableRead,
     AccountReceivableUpdate,
 )
+from app.schemas.audit_log import AuditLogCreate, AuditLogRead
 from app.schemas.business_task import (
     BusinessTaskAssign,
     BusinessTaskCreate,
@@ -41,6 +42,8 @@ __all__ = [
     "AccountReceivableCreate",
     "AccountReceivableRead",
     "AccountReceivableUpdate",
+    "AuditLogCreate",
+    "AuditLogRead",
     "BusinessTaskAssign",
     "BusinessTaskCreate",
     "BusinessTaskRead",
