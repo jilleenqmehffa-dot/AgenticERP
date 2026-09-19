@@ -9,6 +9,7 @@ from app.models.role import Role
 from app.models.sales_order import SalesOrder
 from app.models.sales_order_item import SalesOrderItem
 from app.models.stock_movement import StockMovement
+from app.models.user_account import UserAccount
 
 __all__ = [
     "Inventory",
@@ -22,4 +23,5 @@ __all__ = [
     "SalesOrder",
     "SalesOrderItem",
     "StockMovement",
+    "UserAccount",
 ]

@@ -9,6 +9,7 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.models.business_task import BusinessTask
+    from app.models.user_account import UserAccount
 
 
 class Employee(Base):
@@ -46,4 +47,8 @@ class Employee(Base):
     role: Mapped["Role"] = relationship(back_populates="employees")
     assigned_tasks: Mapped[list["BusinessTask"]] = relationship(
         back_populates="assigned_employee"
+    )
+    user_account: Mapped["UserAccount | None"] = relationship(
+        back_populates="employee",
+        uselist=False,
     )
