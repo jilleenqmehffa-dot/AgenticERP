@@ -39,22 +39,14 @@ class InventoryService:
         stock_quantity = self._validate_quantity(quantity)
 
         async with self._session.begin():
-            inventory = await self._get_locked_inventory(product_id, warehouse_code)
-            inventory.on_hand_quantity += stock_quantity
-            self._refresh_status(inventory)
-
-            movement = self._create_movement(
-                inventory=inventory,
-                movement_type=MovementType.IN,
-                quantity=stock_quantity,
+            return await self._stock_in(
+                product_id,
+                warehouse_code,
+                stock_quantity,
                 reference_type=reference_type,
                 reference_id=reference_id,
                 created_by=created_by,
             )
-            await self._inventories.save(inventory)
-            await self._movements.save(movement)
-
-        return inventory
 
     async def stock_out(
         self,
@@ -69,28 +61,113 @@ class InventoryService:
         stock_quantity = self._validate_quantity(quantity)
 
         async with self._session.begin():
-            inventory = await self._get_locked_inventory(product_id, warehouse_code)
-            available_quantity = calculate_available(
-                inventory.on_hand_quantity,
-                inventory.reserved_quantity,
-            )
-            if available_quantity < stock_quantity:
-                raise InsufficientStockError(available_quantity, stock_quantity)
-
-            inventory.on_hand_quantity -= stock_quantity
-            self._refresh_status(inventory)
-
-            movement = self._create_movement(
-                inventory=inventory,
-                movement_type=MovementType.OUT,
-                quantity=stock_quantity,
+            return await self._stock_out(
+                product_id,
+                warehouse_code,
+                stock_quantity,
                 reference_type=reference_type,
                 reference_id=reference_id,
                 created_by=created_by,
             )
-            await self._inventories.save(inventory)
-            await self._movements.save(movement)
 
+    async def stock_in_in_transaction(
+        self,
+        product_id: int,
+        warehouse_code: str,
+        quantity: Decimal | int,
+        *,
+        reference_type: str | None = None,
+        reference_id: int | None = None,
+        created_by: str | None = None,
+    ) -> Inventory:
+        if not self._session.in_transaction():
+            raise RuntimeError("stock_in_in_transaction requires an active transaction")
+        return await self._stock_in(
+            product_id,
+            warehouse_code,
+            self._validate_quantity(quantity),
+            reference_type=reference_type,
+            reference_id=reference_id,
+            created_by=created_by,
+        )
+
+    async def stock_out_in_transaction(
+        self,
+        product_id: int,
+        warehouse_code: str,
+        quantity: Decimal | int,
+        *,
+        reference_type: str | None = None,
+        reference_id: int | None = None,
+        created_by: str | None = None,
+    ) -> Inventory:
+        if not self._session.in_transaction():
+            raise RuntimeError(
+                "stock_out_in_transaction requires an active transaction"
+            )
+        return await self._stock_out(
+            product_id,
+            warehouse_code,
+            self._validate_quantity(quantity),
+            reference_type=reference_type,
+            reference_id=reference_id,
+            created_by=created_by,
+        )
+
+    async def _stock_in(
+        self,
+        product_id: int,
+        warehouse_code: str,
+        quantity: Decimal,
+        *,
+        reference_type: str | None,
+        reference_id: int | None,
+        created_by: str | None,
+    ) -> Inventory:
+        inventory = await self._get_locked_inventory(product_id, warehouse_code)
+        inventory.on_hand_quantity += quantity
+        self._refresh_status(inventory)
+        movement = self._create_movement(
+            inventory=inventory,
+            movement_type=MovementType.IN,
+            quantity=quantity,
+            reference_type=reference_type,
+            reference_id=reference_id,
+            created_by=created_by,
+        )
+        await self._inventories.save(inventory)
+        await self._movements.save(movement)
+        return inventory
+
+    async def _stock_out(
+        self,
+        product_id: int,
+        warehouse_code: str,
+        quantity: Decimal,
+        *,
+        reference_type: str | None,
+        reference_id: int | None,
+        created_by: str | None,
+    ) -> Inventory:
+        inventory = await self._get_locked_inventory(product_id, warehouse_code)
+        available_quantity = calculate_available(
+            inventory.on_hand_quantity,
+            inventory.reserved_quantity,
+        )
+        if available_quantity < quantity:
+            raise InsufficientStockError(available_quantity, quantity)
+        inventory.on_hand_quantity -= quantity
+        self._refresh_status(inventory)
+        movement = self._create_movement(
+            inventory=inventory,
+            movement_type=MovementType.OUT,
+            quantity=quantity,
+            reference_type=reference_type,
+            reference_id=reference_id,
+            created_by=created_by,
+        )
+        await self._inventories.save(inventory)
+        await self._movements.save(movement)
         return inventory
 
     async def _get_locked_inventory(

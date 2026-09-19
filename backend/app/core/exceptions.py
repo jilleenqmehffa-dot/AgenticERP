@@ -26,3 +26,36 @@ class InsufficientStockError(InventoryError):
             "insufficient available stock: "
             f"available={available_quantity}, requested={requested_quantity}"
         )
+
+
+class TaskError(Exception):
+    """Base exception for controlled task operations."""
+
+
+class TaskNotFoundError(TaskError, LookupError):
+    def __init__(self, task_id: int) -> None:
+        super().__init__(f"task not found: {task_id}")
+
+
+class TaskPermissionError(TaskError, PermissionError):
+    def __init__(self, task_id: int) -> None:
+        super().__init__(f"employee is not assigned to task {task_id}")
+
+
+class InactiveEmployeeError(TaskError):
+    def __init__(self, employee_id: int) -> None:
+        super().__init__(f"employee is not active: {employee_id}")
+
+
+class InvalidTaskStateError(TaskError):
+    def __init__(self, task_id: int) -> None:
+        super().__init__(f"task is not pending: {task_id}")
+
+
+class InvalidTaskDataError(TaskError, ValueError):
+    pass
+
+
+class UnsupportedTaskTypeError(TaskError):
+    def __init__(self, task_type: object) -> None:
+        super().__init__(f"unsupported task type: {task_type}")
