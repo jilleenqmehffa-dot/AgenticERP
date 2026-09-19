@@ -38,3 +38,21 @@ class PayableStatus(StrEnum):
     PARTIALLY_PAID = "PARTIALLY_PAID"
     PAID = "PAID"
     OVERDUE = "OVERDUE"
+
+
+class EmployeeStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
+
+
+class TaskStatus(StrEnum):
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
+    FAILED = "FAILED"
+
+
+class TaskType(StrEnum):
+    STOCK_IN = "STOCK_IN"
+    STOCK_OUT = "STOCK_OUT"
