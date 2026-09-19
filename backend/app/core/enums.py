@@ -47,10 +47,8 @@ class EmployeeStatus(StrEnum):
 
 class TaskStatus(StrEnum):
     PENDING = "PENDING"
-    IN_PROGRESS = "IN_PROGRESS"
     COMPLETED = "COMPLETED"
     CANCELLED = "CANCELLED"
-    FAILED = "FAILED"
 
 
 class TaskType(StrEnum):

@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from pydantic import ValidationError
 
-from app.core.enums import TaskStatus, TaskType
+from app.core.enums import ActorType, TaskStatus, TaskType
 from app.models.business_task import BusinessTask
 from app.schemas.business_task import (
     BusinessTaskAssign,
@@ -26,7 +26,7 @@ class BusinessTaskModelTests(unittest.TestCase):
                 "warehouse_code": "A",
                 "quantity": 50,
             },
-            created_by="SYSTEM",
+            created_by_type=ActorType.SYSTEM,
         )
 
         self.assertEqual(task.planned_data["quantity"], 50)
@@ -37,8 +37,9 @@ class BusinessTaskModelTests(unittest.TestCase):
             BusinessTaskCreate(
                 task_no="TASK-001",
                 task_type=TaskType.STOCK_IN,
+                assigned_employee_id=1,
                 planned_data={"quantity": 50},
-                created_by="SYSTEM",
+                created_by_type=ActorType.SYSTEM,
                 status=TaskStatus.COMPLETED,
             )
 
@@ -53,9 +54,10 @@ class BusinessTaskModelTests(unittest.TestCase):
             BusinessTaskCreate(
                 task_no="TASK-001",
                 task_type=TaskType.STOCK_OUT,
+                assigned_employee_id=1,
                 source_type="SALES_ORDER",
                 planned_data={"quantity": 50},
-                created_by="SYSTEM",
+                created_by_type=ActorType.SYSTEM,
             )
         with self.assertRaises(ValidationError):
             BusinessTaskUpdate(source_id=1001)
@@ -63,6 +65,8 @@ class BusinessTaskModelTests(unittest.TestCase):
     def test_assignment_requires_valid_identifier_shape(self) -> None:
         with self.assertRaises(ValidationError):
             BusinessTaskAssign(assigned_employee_id=0)
+        with self.assertRaises(ValidationError):
+            BusinessTaskUpdate(assigned_employee_id=None)
 
     def test_read_keeps_planned_and_actual_data_separate(self) -> None:
         now = datetime.now(timezone.utc)
@@ -77,10 +81,12 @@ class BusinessTaskModelTests(unittest.TestCase):
             planned_data={"quantity": 50},
             actual_data={"quantity": 40},
             exception_reason="10 units damaged",
-            created_by="SYSTEM",
+            cancel_reason=None,
+            created_by_type=ActorType.SYSTEM,
+            created_by_id=None,
             created_at=now,
-            started_at=now,
             completed_at=now,
+            cancelled_at=None,
             updated_at=now,
         )
 

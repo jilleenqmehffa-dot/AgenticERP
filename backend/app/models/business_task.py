@@ -15,7 +15,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.enums import TaskStatus, TaskType
+from app.core.enums import ActorType, TaskStatus, TaskType
 from app.db.base import Base
 
 
@@ -55,9 +55,9 @@ class BusinessTask(Base):
         default=TaskStatus.PENDING,
         server_default=TaskStatus.PENDING.value,
     )
-    assigned_employee_id: Mapped[int | None] = mapped_column(
+    assigned_employee_id: Mapped[int] = mapped_column(
         ForeignKey("employees.id", ondelete="RESTRICT"),
-        nullable=True,
+        nullable=False,
         index=True,
     )
     source_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -65,16 +65,26 @@ class BusinessTask(Base):
     planned_data: Mapped[dict[str, Any]] = mapped_column(JSONB)
     actual_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     exception_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_by: Mapped[str] = mapped_column(String(255))
+    cancel_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_type: Mapped[ActorType] = mapped_column(
+        Enum(
+            ActorType,
+            name="business_task_actor_type",
+            native_enum=False,
+            create_constraint=True,
+            validate_strings=True,
+        )
+    )
+    created_by_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
     )
-    started_at: Mapped[datetime | None] = mapped_column(
+    completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
-    completed_at: Mapped[datetime | None] = mapped_column(
+    cancelled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
@@ -84,6 +94,6 @@ class BusinessTask(Base):
         onupdate=func.now(),
     )
 
-    assigned_employee: Mapped["Employee | None"] = relationship(
+    assigned_employee: Mapped["Employee"] = relationship(
         back_populates="assigned_tasks"
     )
