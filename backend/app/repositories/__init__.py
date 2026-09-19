@@ -3,6 +3,7 @@ from app.repositories.business_task import BusinessTaskRepository
 from app.repositories.employee import EmployeeRepository
 from app.repositories.inventory import InventoryRepository
 from app.repositories.stock_movement import StockMovementRepository
+from app.repositories.user_account import UserAccountRepository
 
 __all__ = [
     "AuditLogRepository",
@@ -10,4 +11,5 @@ __all__ = [
     "EmployeeRepository",
     "InventoryRepository",
     "StockMovementRepository",
+    "UserAccountRepository",
 ]

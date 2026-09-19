@@ -59,3 +59,8 @@ class InvalidTaskDataError(TaskError, ValueError):
 class UnsupportedTaskTypeError(TaskError):
     def __init__(self, task_type: object) -> None:
         super().__init__(f"unsupported task type: {task_type}")
+
+
+class InvalidCredentialsError(PermissionError):
+    def __init__(self) -> None:
+        super().__init__("invalid account credentials")
