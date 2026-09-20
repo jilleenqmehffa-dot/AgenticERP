@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.exceptions import InvalidTaskDataError
+from app.core.enums import ActorType
 from app.models.business_task import BusinessTask
 from app.models.employee import Employee
 
@@ -54,7 +55,11 @@ class _StockCapability:
 
 class StockInCapability(_StockCapability):
     async def execute(
-        self, task: BusinessTask, employee: Employee, data: ValidatedStockTask
+        self,
+        task: BusinessTask,
+        employee: Employee,
+        data: ValidatedStockTask,
+        trace_id: str,
     ) -> None:
         await self._inventory.stock_in_in_transaction(
             data.plan.product_id,
@@ -63,12 +68,19 @@ class StockInCapability(_StockCapability):
             reference_type="BUSINESS_TASK",
             reference_id=task.id,
             created_by=str(employee.id),
+            actor_type=ActorType.EMPLOYEE,
+            actor_id=str(employee.id),
+            trace_id=trace_id,
         )
 
 
 class StockOutCapability(_StockCapability):
     async def execute(
-        self, task: BusinessTask, employee: Employee, data: ValidatedStockTask
+        self,
+        task: BusinessTask,
+        employee: Employee,
+        data: ValidatedStockTask,
+        trace_id: str,
     ) -> None:
         await self._inventory.stock_out_in_transaction(
             data.plan.product_id,
@@ -77,4 +89,7 @@ class StockOutCapability(_StockCapability):
             reference_type="BUSINESS_TASK",
             reference_id=task.id,
             created_by=str(employee.id),
+            actor_type=ActorType.EMPLOYEE,
+            actor_id=str(employee.id),
+            trace_id=trace_id,
         )

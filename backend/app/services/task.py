@@ -58,8 +58,9 @@ class TaskService:
             if capability is None:
                 raise UnsupportedTaskTypeError(task.task_type)
             validated = capability.validate(task.planned_data, actual_data)
+            trace_id = str(uuid4())
 
-            await capability.execute(task, employee, validated)
+            await capability.execute(task, employee, validated, trace_id)
 
             task.actual_data = validated.actual_data
             task.exception_reason = reason
@@ -71,6 +72,7 @@ class TaskService:
                     task,
                     employee,
                     action="COMPLETE_TASK",
+                    trace_id=trace_id,
                     after_data={
                         "status": task.status.value,
                         "actual_data": task.actual_data,
@@ -92,6 +94,7 @@ class TaskService:
                 task_id, current_employee
             )
             cancel_reason = self._required_reason(reason)
+            trace_id = str(uuid4())
             task.status = TaskStatus.CANCELLED
             task.cancel_reason = cancel_reason
             task.cancelled_at = datetime.now(timezone.utc)
@@ -101,6 +104,7 @@ class TaskService:
                     task,
                     employee,
                     action="CANCEL_TASK",
+                    trace_id=trace_id,
                     after_data={
                         "status": task.status.value,
                         "cancel_reason": task.cancel_reason,
@@ -143,6 +147,7 @@ class TaskService:
         employee: Employee,
         *,
         action: str,
+        trace_id: str,
         after_data: dict[str, Any],
     ) -> AuditLog:
         return AuditLog(
@@ -153,6 +158,6 @@ class TaskService:
             entity_id=str(task.id),
             before_data={"status": TaskStatus.PENDING.value},
             after_data=after_data,
-            trace_id=str(uuid4()),
+            trace_id=trace_id,
             metadata_={},
         )

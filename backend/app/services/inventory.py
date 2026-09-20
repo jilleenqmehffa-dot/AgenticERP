@@ -1,16 +1,19 @@
 from decimal import Decimal, InvalidOperation
+from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import MovementType
+from app.core.enums import ActorType, MovementType
 from app.core.exceptions import (
     InsufficientStockError,
     InvalidStockQuantityError,
     InventoryNotFoundError,
 )
 from app.domain.inventory import calculate_available, evaluate_inventory_status
+from app.models.audit_log import AuditLog
 from app.models.inventory import Inventory
 from app.models.stock_movement import StockMovement
+from app.repositories.audit_log import AuditLogRepository
 from app.repositories.inventory import InventoryRepository
 from app.repositories.stock_movement import StockMovementRepository
 
@@ -21,10 +24,12 @@ class InventoryService:
         session: AsyncSession,
         inventory_repository: InventoryRepository | None = None,
         movement_repository: StockMovementRepository | None = None,
+        audit_repository: AuditLogRepository | None = None,
     ) -> None:
         self._session = session
         self._inventories = inventory_repository or InventoryRepository(session)
         self._movements = movement_repository or StockMovementRepository(session)
+        self._audits = audit_repository or AuditLogRepository(session)
 
     async def stock_in(
         self,
@@ -35,8 +40,12 @@ class InventoryService:
         reference_type: str | None = None,
         reference_id: int | None = None,
         created_by: str | None = None,
+        actor_type: ActorType = ActorType.SYSTEM,
+        actor_id: str | None = None,
+        trace_id: str | None = None,
     ) -> Inventory:
         stock_quantity = self._validate_quantity(quantity)
+        audit_actor_id = self._audit_actor_id(actor_type, actor_id)
 
         async with self._session.begin():
             return await self._stock_in(
@@ -46,6 +55,9 @@ class InventoryService:
                 reference_type=reference_type,
                 reference_id=reference_id,
                 created_by=created_by,
+                actor_type=actor_type,
+                actor_id=audit_actor_id,
+                trace_id=trace_id or str(uuid4()),
             )
 
     async def stock_out(
@@ -57,8 +69,12 @@ class InventoryService:
         reference_type: str | None = None,
         reference_id: int | None = None,
         created_by: str | None = None,
+        actor_type: ActorType = ActorType.SYSTEM,
+        actor_id: str | None = None,
+        trace_id: str | None = None,
     ) -> Inventory:
         stock_quantity = self._validate_quantity(quantity)
+        audit_actor_id = self._audit_actor_id(actor_type, actor_id)
 
         async with self._session.begin():
             return await self._stock_out(
@@ -68,6 +84,9 @@ class InventoryService:
                 reference_type=reference_type,
                 reference_id=reference_id,
                 created_by=created_by,
+                actor_type=actor_type,
+                actor_id=audit_actor_id,
+                trace_id=trace_id or str(uuid4()),
             )
 
     async def stock_in_in_transaction(
@@ -79,9 +98,13 @@ class InventoryService:
         reference_type: str | None = None,
         reference_id: int | None = None,
         created_by: str | None = None,
+        actor_type: ActorType = ActorType.SYSTEM,
+        actor_id: str | None = None,
+        trace_id: str | None = None,
     ) -> Inventory:
         if not self._session.in_transaction():
             raise RuntimeError("stock_in_in_transaction requires an active transaction")
+        audit_actor_id = self._audit_actor_id(actor_type, actor_id)
         return await self._stock_in(
             product_id,
             warehouse_code,
@@ -89,6 +112,9 @@ class InventoryService:
             reference_type=reference_type,
             reference_id=reference_id,
             created_by=created_by,
+            actor_type=actor_type,
+            actor_id=audit_actor_id,
+            trace_id=trace_id or str(uuid4()),
         )
 
     async def stock_out_in_transaction(
@@ -100,11 +126,15 @@ class InventoryService:
         reference_type: str | None = None,
         reference_id: int | None = None,
         created_by: str | None = None,
+        actor_type: ActorType = ActorType.SYSTEM,
+        actor_id: str | None = None,
+        trace_id: str | None = None,
     ) -> Inventory:
         if not self._session.in_transaction():
             raise RuntimeError(
                 "stock_out_in_transaction requires an active transaction"
             )
+        audit_actor_id = self._audit_actor_id(actor_type, actor_id)
         return await self._stock_out(
             product_id,
             warehouse_code,
@@ -112,6 +142,9 @@ class InventoryService:
             reference_type=reference_type,
             reference_id=reference_id,
             created_by=created_by,
+            actor_type=actor_type,
+            actor_id=audit_actor_id,
+            trace_id=trace_id or str(uuid4()),
         )
 
     async def _stock_in(
@@ -123,8 +156,12 @@ class InventoryService:
         reference_type: str | None,
         reference_id: int | None,
         created_by: str | None,
+        actor_type: ActorType,
+        actor_id: str,
+        trace_id: str,
     ) -> Inventory:
         inventory = await self._get_locked_inventory(product_id, warehouse_code)
+        before_data = self._inventory_snapshot(inventory)
         inventory.on_hand_quantity += quantity
         self._refresh_status(inventory)
         movement = self._create_movement(
@@ -137,6 +174,20 @@ class InventoryService:
         )
         await self._inventories.save(inventory)
         await self._movements.save(movement)
+        await self._audits.append(
+            self._inventory_audit_log(
+                inventory,
+                before_data=before_data,
+                movement_type=MovementType.IN,
+                quantity=quantity,
+                reference_type=reference_type,
+                reference_id=reference_id,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                trace_id=trace_id,
+                movement_created_by=created_by,
+            )
+        )
         return inventory
 
     async def _stock_out(
@@ -148,8 +199,12 @@ class InventoryService:
         reference_type: str | None,
         reference_id: int | None,
         created_by: str | None,
+        actor_type: ActorType,
+        actor_id: str,
+        trace_id: str,
     ) -> Inventory:
         inventory = await self._get_locked_inventory(product_id, warehouse_code)
+        before_data = self._inventory_snapshot(inventory)
         available_quantity = calculate_available(
             inventory.on_hand_quantity,
             inventory.reserved_quantity,
@@ -168,7 +223,68 @@ class InventoryService:
         )
         await self._inventories.save(inventory)
         await self._movements.save(movement)
+        await self._audits.append(
+            self._inventory_audit_log(
+                inventory,
+                before_data=before_data,
+                movement_type=MovementType.OUT,
+                quantity=quantity,
+                reference_type=reference_type,
+                reference_id=reference_id,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                trace_id=trace_id,
+                movement_created_by=created_by,
+            )
+        )
         return inventory
+
+    @staticmethod
+    def _audit_actor_id(actor_type: ActorType, actor_id: str | None) -> str:
+        if actor_id is not None and actor_id.strip():
+            return actor_id.strip()
+        if actor_type == ActorType.SYSTEM and actor_id is None:
+            return "SYSTEM"
+        raise ValueError("audit actor_id is required for this actor_type")
+
+    @staticmethod
+    def _inventory_snapshot(inventory: Inventory) -> dict[str, str]:
+        return {
+            "on_hand_quantity": str(inventory.on_hand_quantity),
+            "status": inventory.status.value,
+        }
+
+    @classmethod
+    def _inventory_audit_log(
+        cls,
+        inventory: Inventory,
+        *,
+        before_data: dict[str, str],
+        movement_type: MovementType,
+        quantity: Decimal,
+        reference_type: str | None,
+        reference_id: int | None,
+        actor_type: ActorType,
+        actor_id: str,
+        trace_id: str,
+        movement_created_by: str | None,
+    ) -> AuditLog:
+        return AuditLog(
+            actor_type=actor_type,
+            actor_id=actor_id,
+            action="STOCK_IN" if movement_type == MovementType.IN else "STOCK_OUT",
+            entity_type="INVENTORY",
+            entity_id=f"{inventory.product_id}:{inventory.warehouse_code}",
+            before_data=before_data,
+            after_data=cls._inventory_snapshot(inventory),
+            trace_id=trace_id,
+            metadata_={
+                "quantity": str(quantity),
+                "reference_type": reference_type,
+                "reference_id": reference_id,
+                "movement_created_by": movement_created_by,
+            },
+        )
 
     async def _get_locked_inventory(
         self,

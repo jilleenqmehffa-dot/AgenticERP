@@ -1,8 +1,9 @@
+import json
 import unittest
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
-from app.core.enums import InventoryStatus, MovementType
+from app.core.enums import ActorType, InventoryStatus, MovementType
 from app.core.exceptions import (
     InsufficientStockError,
     InvalidStockQuantityError,
@@ -63,10 +64,13 @@ class InventoryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.inventories.save = AsyncMock(side_effect=lambda inventory: inventory)
         self.movements = MagicMock()
         self.movements.save = AsyncMock(side_effect=lambda movement: movement)
+        self.audits = MagicMock()
+        self.audits.append = AsyncMock(side_effect=lambda audit: audit)
         self.service = InventoryService(
             self.session,  # type: ignore[arg-type]
             self.inventories,
             self.movements,
+            self.audits,
         )
 
     async def test_stock_out_updates_inventory_status_and_creates_movement(self) -> None:
@@ -80,6 +84,8 @@ class InventoryServiceTests(unittest.IsolatedAsyncioTestCase):
             reference_type="SALES_ORDER",
             reference_id=1001,
             created_by="operator-1",
+            actor_type=ActorType.EMPLOYEE,
+            actor_id="operator-1",
         )
 
         self.assertIs(result, inventory)
@@ -93,6 +99,19 @@ class InventoryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(movement.reference_type, "SALES_ORDER")
         self.assertEqual(movement.reference_id, 1001)
         self.assertEqual(movement.created_by, "operator-1")
+        audit = self.audits.append.await_args.args[0]
+        self.assertEqual(audit.action, "STOCK_OUT")
+        self.assertEqual(audit.entity_type, "INVENTORY")
+        self.assertEqual(audit.entity_id, "1:WH-A")
+        self.assertEqual(audit.actor_type, ActorType.EMPLOYEE)
+        self.assertEqual(audit.actor_id, "operator-1")
+        self.assertEqual(audit.before_data["on_hand_quantity"], "100.000")
+        self.assertEqual(audit.after_data["on_hand_quantity"], "60.000")
+        self.assertEqual(audit.metadata_["quantity"], "40")
+        self.assertEqual(audit.metadata_["movement_created_by"], "operator-1")
+        json.dumps(audit.before_data)
+        json.dumps(audit.after_data)
+        json.dumps(audit.metadata_)
         self.assertEqual(self.session.begin_calls, 1)
 
     async def test_stock_in_updates_inventory_status_and_creates_movement(self) -> None:
@@ -108,6 +127,12 @@ class InventoryServiceTests(unittest.IsolatedAsyncioTestCase):
         movement = self.movements.save.await_args.args[0]
         self.assertEqual(movement.movement_type, MovementType.IN)
         self.assertEqual(movement.quantity, Decimal("20.000"))
+        audit = self.audits.append.await_args.args[0]
+        self.assertEqual(audit.action, "STOCK_IN")
+        self.assertEqual(audit.actor_type, ActorType.SYSTEM)
+        self.assertEqual(audit.actor_id, "SYSTEM")
+        self.assertEqual(audit.before_data["status"], InventoryStatus.LOW_STOCK)
+        self.assertEqual(audit.after_data["status"], InventoryStatus.NORMAL)
 
     async def test_stock_out_uses_available_not_on_hand_quantity(self) -> None:
         inventory = make_inventory(on_hand="100.000", reserved="80.000")
@@ -120,6 +145,7 @@ class InventoryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(inventory.on_hand_quantity, Decimal("100.000"))
         self.inventories.save.assert_not_awaited()
         self.movements.save.assert_not_awaited()
+        self.audits.append.assert_not_awaited()
 
     async def test_stock_out_allows_exact_available_quantity(self) -> None:
         inventory = make_inventory(on_hand="100.000", reserved="20.000")
@@ -148,6 +174,7 @@ class InventoryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(self.session.transaction.exception_type, InventoryNotFoundError)
         self.inventories.save.assert_not_awaited()
         self.movements.save.assert_not_awaited()
+        self.audits.append.assert_not_awaited()
 
     async def test_movement_failure_causes_transaction_rollback(self) -> None:
         inventory = make_inventory()
@@ -159,6 +186,25 @@ class InventoryServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(self.session.transaction.exception_type, RuntimeError)
         self.inventories.save.assert_awaited_once_with(inventory)
+        self.audits.append.assert_not_awaited()
+
+    async def test_audit_failure_aborts_inventory_transaction(self) -> None:
+        inventory = make_inventory()
+        self.inventories.get_for_update.return_value = inventory
+        self.audits.append.side_effect = RuntimeError("audit write failed")
+
+        with self.assertRaisesRegex(RuntimeError, "audit write failed"):
+            await self.service.stock_out(1, "WH-A", 1)
+
+        self.assertIs(self.session.transaction.exception_type, RuntimeError)
+        self.movements.save.assert_awaited_once()
+
+    async def test_non_system_actor_requires_identifier(self) -> None:
+        with self.assertRaises(ValueError):
+            await self.service.stock_in(1, "WH-A", 1, actor_type=ActorType.EMPLOYEE)
+
+        self.assertEqual(self.session.begin_calls, 0)
+        self.inventories.get_for_update.assert_not_awaited()
 
 
 if __name__ == "__main__":

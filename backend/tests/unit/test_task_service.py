@@ -96,8 +96,13 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
         self.inventories.save = AsyncMock(side_effect=lambda inventory: inventory)
         self.movements = MagicMock()
         self.movements.save = AsyncMock(side_effect=lambda movement: movement)
+        self.inventory_audits = MagicMock()
+        self.inventory_audits.append = AsyncMock(side_effect=lambda audit: audit)
         inventory_service = InventoryService(
-            self.session, self.inventories, self.movements  # type: ignore[arg-type]
+            self.session,  # type: ignore[arg-type]
+            self.inventories,
+            self.movements,
+            self.inventory_audits,
         )
         self.service = TaskService(
             self.session,  # type: ignore[arg-type]
@@ -129,6 +134,11 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(audit.actor_id, "23")
         self.assertEqual(audit.action, "COMPLETE_TASK")
         self.assertEqual(audit.after_data["actual_data"], {"quantity": 40})
+        inventory_audit = self.inventory_audits.append.await_args.args[0]
+        self.assertEqual(inventory_audit.action, "STOCK_OUT")
+        self.assertEqual(inventory_audit.actor_type, ActorType.EMPLOYEE)
+        self.assertEqual(inventory_audit.actor_id, "23")
+        self.assertEqual(inventory_audit.trace_id, audit.trace_id)
         self.assertEqual(self.session.begin_calls, 1)
         self.assertIsNone(self.session.transaction.exception_type)
 
@@ -153,6 +163,7 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
         self.inventories.get_for_update.assert_not_awaited()
         self.tasks.save.assert_not_awaited()
         self.audits.append.assert_not_awaited()
+        self.inventory_audits.append.assert_not_awaited()
 
     async def test_invalid_plan_never_reaches_inventory(self) -> None:
         self.task.planned_data = {"warehouse_code": "A", "quantity": 50}
@@ -163,6 +174,7 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
         self.inventories.get_for_update.assert_not_awaited()
         self.tasks.save.assert_not_awaited()
         self.audits.append.assert_not_awaited()
+        self.inventory_audits.append.assert_not_awaited()
 
     async def test_insufficient_stock_leaves_task_pending(self) -> None:
         self.inventory.on_hand_quantity = Decimal("20")
@@ -173,6 +185,7 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.task.status, TaskStatus.PENDING)
         self.tasks.save.assert_not_awaited()
         self.audits.append.assert_not_awaited()
+        self.inventory_audits.append.assert_not_awaited()
         self.assertIs(self.session.transaction.exception_type, InsufficientStockError)
 
     async def test_cancel_requires_reason_and_writes_audit(self) -> None:
@@ -192,6 +205,7 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
         audit = self.audits.append.await_args.args[0]
         self.assertEqual(audit.action, "CANCEL_TASK")
         self.assertEqual(audit.after_data["cancel_reason"], "Cannot proceed")
+        self.inventory_audits.append.assert_not_awaited()
 
     async def test_missing_wrong_employee_inactive_and_finished_are_rejected(
         self,
@@ -218,6 +232,7 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.session.begin_calls, 4)
         self.inventories.get_for_update.assert_not_awaited()
         self.audits.append.assert_not_awaited()
+        self.inventory_audits.append.assert_not_awaited()
 
     async def test_audit_failure_aborts_shared_transaction(self) -> None:
         self.audits.append.side_effect = RuntimeError("audit unavailable")
@@ -228,10 +243,27 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(self.session.transaction.exception_type, RuntimeError)
         self.assertEqual(self.session.begin_calls, 1)
         self.movements.save.assert_awaited_once()
+        self.inventory_audits.append.assert_awaited_once()
+
+    async def test_inventory_audit_failure_prevents_task_completion(self) -> None:
+        self.inventory_audits.append.side_effect = RuntimeError(
+            "inventory audit unavailable"
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "inventory audit unavailable"):
+            await self.service.complete_task(1001, self.employee, {"quantity": 40})
+
+        self.assertEqual(self.task.status, TaskStatus.PENDING)
+        self.tasks.save.assert_not_awaited()
+        self.audits.append.assert_not_awaited()
+        self.assertIs(self.session.transaction.exception_type, RuntimeError)
 
     async def test_inventory_transaction_entry_requires_outer_transaction(self) -> None:
         inventory_service = InventoryService(
-            self.session, self.inventories, self.movements  # type: ignore[arg-type]
+            self.session,  # type: ignore[arg-type]
+            self.inventories,
+            self.movements,
+            self.inventory_audits,
         )
 
         with self.assertRaisesRegex(RuntimeError, "active transaction"):
