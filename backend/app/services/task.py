@@ -42,28 +42,58 @@ class TaskService:
             TaskType.STOCK_OUT: StockOutCapability(inventory),
         }
 
+    async def start_task(
+        self,
+        task_id: int,
+        current_employee: Employee,
+    ) -> BusinessTask:
+        async with self._session.begin():
+            task, employee = await self._get_authorized_task(
+                task_id, current_employee, allowed_statuses={TaskStatus.PENDING}
+            )
+            trace_id = str(uuid4())
+            task.status = TaskStatus.IN_PROGRESS
+            task.started_at = datetime.now(timezone.utc)
+            await self._tasks.save(task)
+            await self._audits.append(
+                self._audit_log(
+                    task,
+                    employee,
+                    action="START_TASK",
+                    trace_id=trace_id,
+                    before_status=TaskStatus.PENDING,
+                    after_data={
+                        "status": task.status.value,
+                        "started_at": task.started_at.isoformat(),
+                    },
+                )
+            )
+        return task
+
     async def complete_task(
         self,
         task_id: int,
         current_employee: Employee,
         actual_data: dict[str, Any],
-        exception_reason: str | None = None,
+        reason: str | None = None,
     ) -> BusinessTask:
         async with self._session.begin():
-            task, employee = await self._get_authorized_pending_task(
-                task_id, current_employee
+            task, employee = await self._get_authorized_task(
+                task_id,
+                current_employee,
+                allowed_statuses={TaskStatus.IN_PROGRESS},
             )
-            reason = self._optional_reason(exception_reason)
+            task_reason = self._optional_reason(reason)
             capability = self._capabilities.get(task.task_type)
             if capability is None:
                 raise UnsupportedTaskTypeError(task.task_type)
-            validated = capability.validate(task.planned_data, actual_data)
+            items = await self._tasks.get_items_for_update(task.id)
+            validated = capability.validate(task, items, actual_data)
             trace_id = str(uuid4())
 
             await capability.execute(task, employee, validated, trace_id)
 
-            task.actual_data = validated.actual_data
-            task.exception_reason = reason
+            task.reason = task_reason
             task.status = TaskStatus.COMPLETED
             task.completed_at = datetime.now(timezone.utc)
             await self._tasks.save(task)
@@ -73,10 +103,17 @@ class TaskService:
                     employee,
                     action="COMPLETE_TASK",
                     trace_id=trace_id,
+                    before_status=TaskStatus.IN_PROGRESS,
                     after_data={
                         "status": task.status.value,
-                        "actual_data": task.actual_data,
-                        "exception_reason": task.exception_reason,
+                        "items": [
+                            {
+                                "id": item.id,
+                                "actual_quantity": str(item.actual_quantity),
+                            }
+                            for item in items
+                        ],
+                        "reason": task.reason,
                         "completed_at": task.completed_at.isoformat(),
                     },
                 )
@@ -90,13 +127,16 @@ class TaskService:
         reason: str,
     ) -> BusinessTask:
         async with self._session.begin():
-            task, employee = await self._get_authorized_pending_task(
-                task_id, current_employee
+            task, employee = await self._get_authorized_task(
+                task_id,
+                current_employee,
+                allowed_statuses={TaskStatus.PENDING, TaskStatus.IN_PROGRESS},
             )
+            before_status = task.status
             cancel_reason = self._required_reason(reason)
             trace_id = str(uuid4())
             task.status = TaskStatus.CANCELLED
-            task.cancel_reason = cancel_reason
+            task.reason = cancel_reason
             task.cancelled_at = datetime.now(timezone.utc)
             await self._tasks.save(task)
             await self._audits.append(
@@ -105,27 +145,32 @@ class TaskService:
                     employee,
                     action="CANCEL_TASK",
                     trace_id=trace_id,
+                    before_status=before_status,
                     after_data={
                         "status": task.status.value,
-                        "cancel_reason": task.cancel_reason,
+                        "reason": task.reason,
                         "cancelled_at": task.cancelled_at.isoformat(),
                     },
                 )
             )
         return task
 
-    async def _get_authorized_pending_task(
-        self, task_id: int, current_employee: Employee
+    async def _get_authorized_task(
+        self,
+        task_id: int,
+        current_employee: Employee,
+        *,
+        allowed_statuses: set[TaskStatus],
     ) -> tuple[BusinessTask, Employee]:
         task = await self._tasks.get_for_update(task_id)
         if task is None:
             raise TaskNotFoundError(task_id)
-        if task.assigned_employee_id != current_employee.id:
+        if task.assignee_id != current_employee.id:
             raise TaskPermissionError(task_id)
         employee = await self._employees.get_for_update(current_employee.id)
         if employee is None or employee.status != EmployeeStatus.ACTIVE:
             raise InactiveEmployeeError(current_employee.id)
-        if task.status != TaskStatus.PENDING:
+        if task.status not in allowed_statuses:
             raise InvalidTaskStateError(task_id)
         return task, employee
 
@@ -148,6 +193,7 @@ class TaskService:
         *,
         action: str,
         trace_id: str,
+        before_status: TaskStatus,
         after_data: dict[str, Any],
     ) -> AuditLog:
         return AuditLog(
@@ -156,7 +202,7 @@ class TaskService:
             action=action,
             entity_type="BUSINESS_TASK",
             entity_id=str(task.id),
-            before_data={"status": TaskStatus.PENDING.value},
+            before_data={"status": before_status.value},
             after_data=after_data,
             trace_id=trace_id,
             metadata_={},

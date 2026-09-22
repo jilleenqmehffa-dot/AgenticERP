@@ -49,7 +49,7 @@ class InactiveEmployeeError(TaskError):
 
 class InvalidTaskStateError(TaskError):
     def __init__(self, task_id: int) -> None:
-        super().__init__(f"task is not pending: {task_id}")
+        super().__init__(f"task state does not allow this operation: {task_id}")
 
 
 class InvalidTaskDataError(TaskError, ValueError):

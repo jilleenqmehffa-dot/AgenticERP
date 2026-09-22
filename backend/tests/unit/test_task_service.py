@@ -19,8 +19,10 @@ from app.core.exceptions import (
     TaskPermissionError,
 )
 from app.models.business_task import BusinessTask
+from app.models.business_task_item import BusinessTaskItem
 from app.models.employee import Employee
 from app.models.inventory import Inventory
+from app.models.warehouse import Warehouse
 from app.services.inventory import InventoryService
 from app.services.task import TaskService
 
@@ -67,14 +69,24 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
             id=1001,
             task_no="TASK-1001",
             task_type=TaskType.STOCK_OUT,
-            status=TaskStatus.PENDING,
-            assigned_employee_id=23,
-            planned_data={"product_id": 1, "warehouse_code": "A", "quantity": 50},
-            actual_data=None,
-            exception_reason=None,
-            cancel_reason=None,
+            status=TaskStatus.IN_PROGRESS,
+            warehouse_id=1,
+            assignee_id=23,
+            reason=None,
+            started_at=None,
             completed_at=None,
             cancelled_at=None,
+            failed_at=None,
+        )
+        self.task.warehouse = Warehouse(id=1, code="A", name="Warehouse A")
+        self.item = BusinessTaskItem(
+            id=101,
+            task_id=1001,
+            product_id=1,
+            from_location_id=11,
+            to_location_id=12,
+            planned_quantity=Decimal("50"),
+            actual_quantity=None,
         )
         self.inventory = Inventory(
             product_id=1,
@@ -86,6 +98,7 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.tasks = MagicMock()
         self.tasks.get_for_update = AsyncMock(return_value=self.task)
+        self.tasks.get_items_for_update = AsyncMock(return_value=[self.item])
         self.tasks.save = AsyncMock(side_effect=lambda task: task)
         self.employees = MagicMock()
         self.employees.get_for_update = AsyncMock(return_value=self.employee)
@@ -119,8 +132,8 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(result, self.task)
         self.assertEqual(self.task.status, TaskStatus.COMPLETED)
-        self.assertEqual(self.task.actual_data, {"quantity": 40})
-        self.assertEqual(self.task.exception_reason, "10 units damaged")
+        self.assertEqual(self.item.actual_quantity, Decimal("40"))
+        self.assertEqual(self.task.reason, "10 units damaged")
         self.assertIsNotNone(self.task.completed_at)
         self.assertIsNone(self.task.cancelled_at)
         self.assertEqual(self.inventory.on_hand_quantity, Decimal("60"))
@@ -133,7 +146,10 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(audit.actor_type, ActorType.EMPLOYEE)
         self.assertEqual(audit.actor_id, "23")
         self.assertEqual(audit.action, "COMPLETE_TASK")
-        self.assertEqual(audit.after_data["actual_data"], {"quantity": 40})
+        self.assertEqual(
+            audit.after_data["items"],
+            [{"id": 101, "actual_quantity": "40"}],
+        )
         inventory_audit = self.inventory_audits.append.await_args.args[0]
         self.assertEqual(inventory_audit.action, "STOCK_OUT")
         self.assertEqual(inventory_audit.actor_type, ActorType.EMPLOYEE)
@@ -165,8 +181,8 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
         self.audits.append.assert_not_awaited()
         self.inventory_audits.append.assert_not_awaited()
 
-    async def test_invalid_plan_never_reaches_inventory(self) -> None:
-        self.task.planned_data = {"warehouse_code": "A", "quantity": 50}
+    async def test_missing_task_item_never_reaches_inventory(self) -> None:
+        self.tasks.get_items_for_update.return_value = []
 
         with self.assertRaises(InvalidTaskDataError):
             await self.service.complete_task(1001, self.employee, {"quantity": 40})
@@ -176,13 +192,13 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
         self.audits.append.assert_not_awaited()
         self.inventory_audits.append.assert_not_awaited()
 
-    async def test_insufficient_stock_leaves_task_pending(self) -> None:
+    async def test_insufficient_stock_leaves_task_in_progress(self) -> None:
         self.inventory.on_hand_quantity = Decimal("20")
 
         with self.assertRaises(InsufficientStockError):
             await self.service.complete_task(1001, self.employee, {"quantity": 40})
 
-        self.assertEqual(self.task.status, TaskStatus.PENDING)
+        self.assertEqual(self.task.status, TaskStatus.IN_PROGRESS)
         self.tasks.save.assert_not_awaited()
         self.audits.append.assert_not_awaited()
         self.inventory_audits.append.assert_not_awaited()
@@ -198,13 +214,13 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(result, self.task)
         self.assertEqual(self.task.status, TaskStatus.CANCELLED)
-        self.assertEqual(self.task.cancel_reason, "Cannot proceed")
+        self.assertEqual(self.task.reason, "Cannot proceed")
         self.assertIsNotNone(self.task.cancelled_at)
         self.assertIsNone(self.task.completed_at)
         self.inventories.get_for_update.assert_not_awaited()
         audit = self.audits.append.await_args.args[0]
         self.assertEqual(audit.action, "CANCEL_TASK")
-        self.assertEqual(audit.after_data["cancel_reason"], "Cannot proceed")
+        self.assertEqual(audit.after_data["reason"], "Cannot proceed")
         self.inventory_audits.append.assert_not_awaited()
 
     async def test_missing_wrong_employee_inactive_and_finished_are_rejected(
@@ -215,11 +231,11 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
             await self.service.complete_task(1001, self.employee, {"quantity": 40})
 
         self.tasks.get_for_update.return_value = self.task
-        self.task.assigned_employee_id = 99
+        self.task.assignee_id = 99
         with self.assertRaises(TaskPermissionError):
             await self.service.cancel_task(1001, self.employee, "reason")
 
-        self.task.assigned_employee_id = 23
+        self.task.assignee_id = 23
         self.employee.status = EmployeeStatus.INACTIVE
         with self.assertRaises(InactiveEmployeeError):
             await self.service.complete_task(1001, self.employee, {"quantity": 40})
@@ -253,7 +269,7 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "inventory audit unavailable"):
             await self.service.complete_task(1001, self.employee, {"quantity": 40})
 
-        self.assertEqual(self.task.status, TaskStatus.PENDING)
+        self.assertEqual(self.task.status, TaskStatus.IN_PROGRESS)
         self.tasks.save.assert_not_awaited()
         self.audits.append.assert_not_awaited()
         self.assertIs(self.session.transaction.exception_type, RuntimeError)
@@ -277,12 +293,24 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
             await self.service.complete_task(1001, self.employee, {"quantity": 40})
 
         self.task.status = TaskStatus.PENDING
-        self.task.actual_data = None
-        self.task.exception_reason = None
+        self.item.actual_quantity = None
+        self.task.reason = None
         self.task.completed_at = None
         await self.service.cancel_task(1001, self.employee, "cannot proceed")
         with self.assertRaises(InvalidTaskStateError):
             await self.service.cancel_task(1001, self.employee, "again")
+
+    async def test_start_task_moves_pending_task_to_in_progress(self) -> None:
+        self.task.status = TaskStatus.PENDING
+
+        result = await self.service.start_task(1001, self.employee)
+
+        self.assertIs(result, self.task)
+        self.assertEqual(self.task.status, TaskStatus.IN_PROGRESS)
+        self.assertIsNotNone(self.task.started_at)
+        audit = self.audits.append.await_args.args[0]
+        self.assertEqual(audit.action, "START_TASK")
+        self.assertEqual(audit.before_data, {"status": "PENDING"})
 
 
 if __name__ == "__main__":
