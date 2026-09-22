@@ -45,6 +45,13 @@ from app.schemas.warehouse import (
     WarehouseLocationRead,
     WarehouseRead,
 )
+from app.schemas.task_workflow import (
+    TaskExecutionRead,
+    TaskRecommendationCreate,
+    TaskRecommendationRead,
+    TaskSubmissionCreate,
+    TaskSubmissionRead,
+)
 
 __all__ = [
     "AccountPayableCreate",
@@ -86,4 +93,9 @@ __all__ = [
     "WarehouseLocationCreate",
     "WarehouseLocationRead",
     "WarehouseRead",
+    "TaskExecutionRead",
+    "TaskRecommendationCreate",
+    "TaskRecommendationRead",
+    "TaskSubmissionCreate",
+    "TaskSubmissionRead",
 ]

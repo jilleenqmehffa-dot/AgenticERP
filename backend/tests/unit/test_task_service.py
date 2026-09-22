@@ -69,7 +69,7 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
             id=1001,
             task_no="TASK-1001",
             task_type=TaskType.STOCK_OUT,
-            status=TaskStatus.IN_PROGRESS,
+            status=TaskStatus.APPROVED_FOR_EXECUTION,
             warehouse_id=1,
             assignee_id=23,
             reason=None,
@@ -192,19 +192,21 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
         self.audits.append.assert_not_awaited()
         self.inventory_audits.append.assert_not_awaited()
 
-    async def test_insufficient_stock_leaves_task_in_progress(self) -> None:
+    async def test_insufficient_stock_leaves_task_approved_for_execution(self) -> None:
         self.inventory.on_hand_quantity = Decimal("20")
 
         with self.assertRaises(InsufficientStockError):
             await self.service.complete_task(1001, self.employee, {"quantity": 40})
 
-        self.assertEqual(self.task.status, TaskStatus.IN_PROGRESS)
+        self.assertEqual(self.task.status, TaskStatus.APPROVED_FOR_EXECUTION)
         self.tasks.save.assert_not_awaited()
         self.audits.append.assert_not_awaited()
         self.inventory_audits.append.assert_not_awaited()
         self.assertIs(self.session.transaction.exception_type, InsufficientStockError)
 
     async def test_cancel_requires_reason_and_writes_audit(self) -> None:
+        self.task.status = TaskStatus.IN_PROGRESS
+
         with self.assertRaises(InvalidTaskDataError):
             await self.service.cancel_task(1001, self.employee, "  ")
 
@@ -269,7 +271,7 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "inventory audit unavailable"):
             await self.service.complete_task(1001, self.employee, {"quantity": 40})
 
-        self.assertEqual(self.task.status, TaskStatus.IN_PROGRESS)
+        self.assertEqual(self.task.status, TaskStatus.APPROVED_FOR_EXECUTION)
         self.tasks.save.assert_not_awaited()
         self.audits.append.assert_not_awaited()
         self.assertIs(self.session.transaction.exception_type, RuntimeError)
@@ -292,7 +294,7 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(InvalidTaskStateError):
             await self.service.complete_task(1001, self.employee, {"quantity": 40})
 
-        self.task.status = TaskStatus.PENDING
+        self.task.status = TaskStatus.ASSIGNED
         self.item.actual_quantity = None
         self.task.reason = None
         self.task.completed_at = None
@@ -300,8 +302,8 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(InvalidTaskStateError):
             await self.service.cancel_task(1001, self.employee, "again")
 
-    async def test_start_task_moves_pending_task_to_in_progress(self) -> None:
-        self.task.status = TaskStatus.PENDING
+    async def test_start_task_moves_assigned_task_to_in_progress(self) -> None:
+        self.task.status = TaskStatus.ASSIGNED
 
         result = await self.service.start_task(1001, self.employee)
 
@@ -310,7 +312,18 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(self.task.started_at)
         audit = self.audits.append.await_args.args[0]
         self.assertEqual(audit.action, "START_TASK")
-        self.assertEqual(audit.before_data, {"status": "PENDING"})
+        self.assertEqual(audit.before_data, {"status": "ASSIGNED"})
+
+    async def test_invalid_task_identity_is_rejected_before_transaction(self) -> None:
+        with self.assertRaises(InvalidTaskDataError):
+            await self.service.start_task(0, self.employee)
+
+        invalid_employee = Employee(id=0, status=EmployeeStatus.ACTIVE)
+        with self.assertRaises(InvalidTaskDataError):
+            await self.service.start_task(1001, invalid_employee)
+
+        self.assertEqual(self.session.begin_calls, 0)
+        self.tasks.get_for_update.assert_not_awaited()
 
 
 if __name__ == "__main__":

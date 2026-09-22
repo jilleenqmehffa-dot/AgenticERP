@@ -21,6 +21,8 @@ if TYPE_CHECKING:
     from app.models.business_task_item import BusinessTaskItem
     from app.models.employee import Employee
     from app.models.inventory_count_item import InventoryCountItem
+    from app.models.task_execution import TaskExecution
+    from app.models.task_submission import TaskSubmission
     from app.models.warehouse import Warehouse
 
 
@@ -57,8 +59,8 @@ class BusinessTask(Base):
             create_constraint=True,
             validate_strings=True,
         ),
-        default=TaskStatus.PENDING,
-        server_default=TaskStatus.PENDING.value,
+        default=TaskStatus.ASSIGNED,
+        server_default=TaskStatus.ASSIGNED.value,
     )
     warehouse_id: Mapped[int] = mapped_column(
         ForeignKey("warehouses.id", ondelete="RESTRICT"),
@@ -118,6 +120,14 @@ class BusinessTask(Base):
         cascade="all, delete-orphan",
     )
     inventory_count_items: Mapped[list["InventoryCountItem"]] = relationship(
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
+    submissions: Mapped[list["TaskSubmission"]] = relationship(
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
+    executions: Mapped[list["TaskExecution"]] = relationship(
         back_populates="task",
         cascade="all, delete-orphan",
     )

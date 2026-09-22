@@ -23,6 +23,9 @@ from app.models.stock_movement import StockMovement
 from app.models.stock_reservation import StockReservation
 from app.models.stock_transfer import StockTransfer
 from app.models.stock_transfer_item import StockTransferItem
+from app.models.task_execution import TaskExecution
+from app.models.task_recommendation import TaskRecommendation
+from app.models.task_submission import TaskSubmission
 from app.models.user_account import UserAccount
 from app.models.warehouse import Warehouse
 from app.models.warehouse_location import WarehouseLocation
@@ -53,6 +56,9 @@ __all__ = [
     "StockReservation",
     "StockTransfer",
     "StockTransferItem",
+    "TaskExecution",
+    "TaskRecommendation",
+    "TaskSubmission",
     "UserAccount",
     "Warehouse",
     "WarehouseLocation",

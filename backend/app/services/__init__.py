@@ -1,10 +1,15 @@
-from app.services.account import AuthenticatedSession, authenticate_account
+from app.services.account import AccountService, AuthenticatedSession, authenticate_account
 from app.services.inventory import InventoryService
 from app.services.task import TaskService
+from app.services.task_review import TaskReviewService
+from app.services.task_submission import TaskSubmissionService
 
 __all__ = [
+    "AccountService",
     "AuthenticatedSession",
     "InventoryService",
     "TaskService",
+    "TaskReviewService",
+    "TaskSubmissionService",
     "authenticate_account",
 ]

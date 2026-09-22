@@ -65,6 +65,16 @@ class UnsupportedTaskTypeError(TaskError):
         super().__init__(f"unsupported task type: {task_type}")
 
 
+class TaskSubmissionNotFoundError(TaskError, LookupError):
+    def __init__(self, task_id: int) -> None:
+        super().__init__(f"pending submission not found for task: {task_id}")
+
+
+class TaskReviewPermissionError(TaskError, PermissionError):
+    def __init__(self, employee_id: int) -> None:
+        super().__init__(f"employee is not allowed to review tasks: {employee_id}")
+
+
 class InvalidCredentialsError(PermissionError):
     def __init__(self) -> None:
         super().__init__("invalid account credentials")

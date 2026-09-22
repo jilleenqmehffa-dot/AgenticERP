@@ -4,15 +4,14 @@ from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.capabilities.stock import StockInCapability, StockOutCapability
-from app.core.enums import ActorType, EmployeeStatus, TaskStatus, TaskType
+from app.capabilities.dispatcher import CapabilityDispatcher
+from app.core.enums import ActorType, EmployeeStatus, TaskStatus
 from app.core.exceptions import (
     InactiveEmployeeError,
     InvalidTaskDataError,
     InvalidTaskStateError,
     TaskNotFoundError,
     TaskPermissionError,
-    UnsupportedTaskTypeError,
 )
 from app.models.audit_log import AuditLog
 from app.models.business_task import BusinessTask
@@ -37,19 +36,18 @@ class TaskService:
         self._employees = employee_repository or EmployeeRepository(session)
         self._audits = audit_repository or AuditLogRepository(session)
         inventory = inventory_service or InventoryService(session)
-        self._capabilities = {
-            TaskType.STOCK_IN: StockInCapability(inventory),
-            TaskType.STOCK_OUT: StockOutCapability(inventory),
-        }
+        self._dispatcher = CapabilityDispatcher(inventory)
 
     async def start_task(
         self,
         task_id: int,
         current_employee: Employee,
     ) -> BusinessTask:
+        task_id = self._validate_task_id(task_id)
+        self._validate_current_employee(current_employee)
         async with self._session.begin():
             task, employee = await self._get_authorized_task(
-                task_id, current_employee, allowed_statuses={TaskStatus.PENDING}
+                task_id, current_employee, allowed_statuses={TaskStatus.ASSIGNED}
             )
             trace_id = str(uuid4())
             task.status = TaskStatus.IN_PROGRESS
@@ -61,7 +59,7 @@ class TaskService:
                     employee,
                     action="START_TASK",
                     trace_id=trace_id,
-                    before_status=TaskStatus.PENDING,
+                    before_status=TaskStatus.ASSIGNED,
                     after_data={
                         "status": task.status.value,
                         "started_at": task.started_at.isoformat(),
@@ -77,21 +75,25 @@ class TaskService:
         actual_data: dict[str, Any],
         reason: str | None = None,
     ) -> BusinessTask:
+        task_id = self._validate_task_id(task_id)
+        self._validate_current_employee(current_employee)
+        task_reason = self._optional_reason(reason)
         async with self._session.begin():
             task, employee = await self._get_authorized_task(
                 task_id,
                 current_employee,
-                allowed_statuses={TaskStatus.IN_PROGRESS},
+                allowed_statuses={TaskStatus.APPROVED_FOR_EXECUTION},
             )
-            task_reason = self._optional_reason(reason)
-            capability = self._capabilities.get(task.task_type)
-            if capability is None:
-                raise UnsupportedTaskTypeError(task.task_type)
             items = await self._tasks.get_items_for_update(task.id)
-            validated = capability.validate(task, items, actual_data)
             trace_id = str(uuid4())
 
-            await capability.execute(task, employee, validated, trace_id)
+            await self._dispatcher.execute(
+                task,
+                employee,
+                items,
+                actual_data,
+                trace_id,
+            )
 
             task.reason = task_reason
             task.status = TaskStatus.COMPLETED
@@ -103,7 +105,7 @@ class TaskService:
                     employee,
                     action="COMPLETE_TASK",
                     trace_id=trace_id,
-                    before_status=TaskStatus.IN_PROGRESS,
+                    before_status=TaskStatus.APPROVED_FOR_EXECUTION,
                     after_data={
                         "status": task.status.value,
                         "items": [
@@ -126,14 +128,20 @@ class TaskService:
         current_employee: Employee,
         reason: str,
     ) -> BusinessTask:
+        task_id = self._validate_task_id(task_id)
+        self._validate_current_employee(current_employee)
+        cancel_reason = self._required_reason(reason)
         async with self._session.begin():
             task, employee = await self._get_authorized_task(
                 task_id,
                 current_employee,
-                allowed_statuses={TaskStatus.PENDING, TaskStatus.IN_PROGRESS},
+                allowed_statuses={
+                    TaskStatus.ASSIGNED,
+                    TaskStatus.IN_PROGRESS,
+                    TaskStatus.CHANGES_REQUESTED,
+                },
             )
             before_status = task.status
-            cancel_reason = self._required_reason(reason)
             trace_id = str(uuid4())
             task.status = TaskStatus.CANCELLED
             task.reason = cancel_reason
@@ -179,6 +187,22 @@ class TaskService:
         if reason is None:
             return None
         return TaskService._required_reason(reason)
+
+    @staticmethod
+    def _validate_task_id(task_id: object) -> int:
+        if isinstance(task_id, bool) or not isinstance(task_id, int) or task_id <= 0:
+            raise InvalidTaskDataError("task_id must be a positive integer")
+        return task_id
+
+    @staticmethod
+    def _validate_current_employee(employee: object) -> None:
+        employee_id = getattr(employee, "id", None)
+        if (
+            isinstance(employee_id, bool)
+            or not isinstance(employee_id, int)
+            or employee_id <= 0
+        ):
+            raise InvalidTaskDataError("current employee must have a positive id")
 
     @staticmethod
     def _required_reason(reason: str) -> str:

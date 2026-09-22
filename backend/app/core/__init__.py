@@ -1,25 +1,31 @@
 from app.core.enums import (
     ActorType,
     EmployeeStatus,
+    ExecutionStatus,
     InventoryStatus,
     MovementType,
     PayableStatus,
     ProductStatus,
+    RecommendationStatus,
     ReceivableStatus,
     SalesOrderStatus,
     TaskStatus,
     TaskType,
+    SubmissionStatus,
 )
 
 __all__ = [
     "ActorType",
     "EmployeeStatus",
+    "ExecutionStatus",
     "InventoryStatus",
     "MovementType",
     "PayableStatus",
     "ProductStatus",
+    "RecommendationStatus",
     "ReceivableStatus",
     "SalesOrderStatus",
     "TaskStatus",
     "TaskType",
+    "SubmissionStatus",
 ]

@@ -36,10 +36,14 @@ class BusinessTaskModelTests(unittest.TestCase):
         self.assertEqual(
             set(TaskStatus),
             {
-                TaskStatus.PENDING,
+                TaskStatus.ASSIGNED,
                 TaskStatus.IN_PROGRESS,
+                TaskStatus.PENDING_REVIEW,
+                TaskStatus.CHANGES_REQUESTED,
+                TaskStatus.APPROVED_FOR_EXECUTION,
+                TaskStatus.EXECUTING,
                 TaskStatus.COMPLETED,
-                TaskStatus.FAILED,
+                TaskStatus.EXECUTION_FAILED,
                 TaskStatus.CANCELLED,
             },
         )
@@ -59,7 +63,7 @@ class BusinessTaskModelTests(unittest.TestCase):
                 self.assertFalse(columns[name].nullable)
 
         self.assertTrue(columns.task_no.unique)
-        self.assertEqual(columns.status.server_default.arg, TaskStatus.PENDING.value)
+        self.assertEqual(columns.status.server_default.arg, TaskStatus.ASSIGNED.value)
         self.assertIsInstance(columns.task_type.type, Enum)
         self.assertEqual(
             next(iter(columns.warehouse_id.foreign_keys)).target_fullname,
