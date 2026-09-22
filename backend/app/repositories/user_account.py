@@ -12,3 +12,8 @@ class UserAccountRepository:
         return await self._session.scalar(
             select(UserAccount).where(UserAccount.username == username)
         )
+
+    async def save(self, account: UserAccount) -> UserAccount:
+        self._session.add(account)
+        await self._session.flush()
+        return account

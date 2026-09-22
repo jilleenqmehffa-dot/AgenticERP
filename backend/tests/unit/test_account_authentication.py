@@ -8,6 +8,33 @@ from app.repositories.user_account import UserAccountRepository
 from app.services.account import AuthenticatedSession, authenticate_account
 
 
+class FakeTransaction:
+    def __init__(self) -> None:
+        self.exception_type: type[BaseException] | None = None
+
+    async def __aenter__(self) -> "FakeTransaction":
+        return self
+
+    async def __aexit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: object,
+    ) -> bool:
+        self.exception_type = exception_type
+        return False
+
+
+class FakeSession:
+    def __init__(self) -> None:
+        self.transaction = FakeTransaction()
+        self.begin_calls = 0
+
+    def begin(self) -> FakeTransaction:
+        self.begin_calls += 1
+        return self.transaction
+
+
 class PasswordHashTests(unittest.TestCase):
     def test_hash_is_salted_and_verifies_only_the_matching_password(self) -> None:
         first = hash_password("correct horse battery staple")
@@ -41,7 +68,7 @@ class UserAccountRepositoryTests(unittest.IsolatedAsyncioTestCase):
 
 class AccountAuthenticationTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        self.session = MagicMock()
+        self.session = FakeSession()
         self.repository = MagicMock()
         self.account = UserAccount(
             id=9,
@@ -51,10 +78,13 @@ class AccountAuthenticationTests(unittest.IsolatedAsyncioTestCase):
             is_active=True,
         )
         self.repository.get_by_username = AsyncMock(return_value=self.account)
+        self.repository.save = AsyncMock(side_effect=lambda account: account)
+        self.audits = MagicMock()
+        self.audits.append = AsyncMock(side_effect=lambda audit: audit)
 
     async def test_valid_account_returns_employee_session(self) -> None:
         result = await authenticate_account(
-            self.session, "operator1", "valid-password", self.repository
+            self.session, "operator1", "valid-password", self.repository, self.audits
         )
 
         self.assertIsInstance(result, AuthenticatedSession)
@@ -63,41 +93,87 @@ class AccountAuthenticationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.username, "operator1")
         self.assertIsNotNone(result.authenticated_at.tzinfo)
         self.repository.get_by_username.assert_awaited_once_with("operator1")
-        self.session.commit.assert_not_called()
+        self.assertIsNotNone(self.account.last_login_at)
+        self.repository.save.assert_awaited_once_with(self.account)
+        audit = self.audits.append.await_args.args[0]
+        self.assertEqual(audit.action, "AUTHENTICATION_SUCCEEDED")
+        self.assertEqual(audit.actor_id, "23")
+        self.assertEqual(audit.after_data, {"authenticated": True})
+        self.assertNotIn("password", audit.metadata_)
+        self.assertEqual(self.session.begin_calls, 1)
 
     async def test_unknown_wrong_password_and_inactive_account_share_error(self) -> None:
         messages = []
         self.repository.get_by_username.return_value = None
         with self.assertRaises(InvalidCredentialsError) as raised:
             await authenticate_account(
-                self.session, "missing", "valid-password", self.repository
+                self.session,
+                "missing",
+                "valid-password",
+                self.repository,
+                self.audits,
             )
         messages.append(str(raised.exception))
 
         self.repository.get_by_username.return_value = self.account
         with self.assertRaises(InvalidCredentialsError) as raised:
             await authenticate_account(
-                self.session, "operator1", "wrong-password", self.repository
+                self.session,
+                "operator1",
+                "wrong-password",
+                self.repository,
+                self.audits,
             )
         messages.append(str(raised.exception))
 
         self.account.is_active = False
         with self.assertRaises(InvalidCredentialsError) as raised:
             await authenticate_account(
-                self.session, "operator1", "valid-password", self.repository
+                self.session,
+                "operator1",
+                "valid-password",
+                self.repository,
+                self.audits,
             )
         messages.append(str(raised.exception))
 
         self.assertEqual(len(set(messages)), 1)
         self.assertNotIn("valid-password", messages[0])
+        self.assertEqual(self.audits.append.await_count, 3)
+        for call in self.audits.append.await_args_list:
+            audit = call.args[0]
+            self.assertEqual(audit.action, "AUTHENTICATION_FAILED")
+            self.assertEqual(audit.after_data, {"authenticated": False})
+            self.assertNotIn("password", audit.metadata_)
+        self.repository.save.assert_not_awaited()
 
     async def test_malformed_stored_hash_is_rejected(self) -> None:
         self.account.password_hash = "not-a-valid-hash"
 
         with self.assertRaises(InvalidCredentialsError):
             await authenticate_account(
-                self.session, "operator1", "valid-password", self.repository
+                self.session,
+                "operator1",
+                "valid-password",
+                self.repository,
+                self.audits,
             )
+
+        self.audits.append.assert_awaited_once()
+
+    async def test_audit_failure_aborts_authentication_transaction(self) -> None:
+        self.audits.append.side_effect = RuntimeError("audit unavailable")
+
+        with self.assertRaisesRegex(RuntimeError, "audit unavailable"):
+            await authenticate_account(
+                self.session,
+                "operator1",
+                "valid-password",
+                self.repository,
+                self.audits,
+            )
+
+        self.assertIs(self.session.transaction.exception_type, RuntimeError)
 
 
 if __name__ == "__main__":
