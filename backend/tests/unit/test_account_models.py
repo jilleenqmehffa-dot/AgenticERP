@@ -22,7 +22,7 @@ class AccountModelTests(unittest.TestCase):
             amount=Decimal("1000.00"),
             paid_amount=Decimal("250.00"),
             due_date=date(2026, 10, 1),
-            status=ReceivableStatus.PARTIALLY_PAID,
+            status=ReceivableStatus.UNPAID,
         )
 
         self.assertEqual(receivable.outstanding_amount, Decimal("750.00"))
@@ -34,7 +34,7 @@ class AccountModelTests(unittest.TestCase):
             amount=Decimal("800.00"),
             paid_amount=Decimal("300.00"),
             due_date=date(2026, 10, 1),
-            status=PayableStatus.PARTIALLY_PAID,
+            status=PayableStatus.UNPAID,
         )
 
         self.assertEqual(payable.outstanding_amount, Decimal("500.00"))
@@ -68,7 +68,7 @@ class AccountModelTests(unittest.TestCase):
             amount=Decimal("100.00"),
             paid_amount=Decimal("30.00"),
             due_date=date(2026, 10, 1),
-            status=ReceivableStatus.PARTIALLY_PAID,
+            status=ReceivableStatus.UNPAID,
             created_at=now,
             updated_at=now,
         )
@@ -79,7 +79,7 @@ class AccountModelTests(unittest.TestCase):
             amount=Decimal("90.00"),
             paid_amount=Decimal("20.00"),
             due_date=date(2026, 10, 1),
-            status=PayableStatus.PARTIALLY_PAID,
+            status=PayableStatus.UNPAID,
             created_at=now,
             updated_at=now,
         )

@@ -98,7 +98,6 @@ SalesOrderItem
 ``` text
 DRAFT
 CONFIRMED
-PARTIALLY_FULFILLED
 FULFILLED
 CANCELLED
 ```
@@ -660,7 +659,6 @@ AccountReceivable
 
 ``` text
 UNPAID
-PARTIALLY_PAID
 PAID
 OVERDUE
 ```
@@ -696,7 +694,6 @@ AccountPayable
 
 ``` text
 UNPAID
-PARTIALLY_PAID
 PAID
 OVERDUE
 ```
