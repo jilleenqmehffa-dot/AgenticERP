@@ -5,6 +5,10 @@ class InventoryError(Exception):
     """Base exception for controlled inventory operations."""
 
 
+class InvalidInventoryDataError(InventoryError, ValueError):
+    pass
+
+
 class InvalidStockQuantityError(InventoryError, ValueError):
     def __init__(self, quantity: object) -> None:
         super().__init__(f"stock quantity must be greater than zero: {quantity!r}")

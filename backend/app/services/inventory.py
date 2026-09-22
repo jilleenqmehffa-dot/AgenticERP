@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.enums import ActorType, MovementType
 from app.core.exceptions import (
     InsufficientStockError,
+    InvalidInventoryDataError,
     InvalidStockQuantityError,
     InventoryNotFoundError,
 )
@@ -44,8 +45,15 @@ class InventoryService:
         actor_id: str | None = None,
         trace_id: str | None = None,
     ) -> Inventory:
+        product_id = self._validate_product_id(product_id)
+        warehouse_code = self._validate_warehouse_code(warehouse_code)
         stock_quantity = self._validate_quantity(quantity)
+        reference_type, reference_id = self._validate_reference(
+            reference_type, reference_id
+        )
+        created_by = self._optional_identifier(created_by, "created_by")
         audit_actor_id = self._audit_actor_id(actor_type, actor_id)
+        trace_id = self._trace_id(trace_id)
 
         async with self._session.begin():
             return await self._stock_in(
@@ -57,7 +65,7 @@ class InventoryService:
                 created_by=created_by,
                 actor_type=actor_type,
                 actor_id=audit_actor_id,
-                trace_id=trace_id or str(uuid4()),
+                trace_id=trace_id,
             )
 
     async def stock_out(
@@ -73,8 +81,15 @@ class InventoryService:
         actor_id: str | None = None,
         trace_id: str | None = None,
     ) -> Inventory:
+        product_id = self._validate_product_id(product_id)
+        warehouse_code = self._validate_warehouse_code(warehouse_code)
         stock_quantity = self._validate_quantity(quantity)
+        reference_type, reference_id = self._validate_reference(
+            reference_type, reference_id
+        )
+        created_by = self._optional_identifier(created_by, "created_by")
         audit_actor_id = self._audit_actor_id(actor_type, actor_id)
+        trace_id = self._trace_id(trace_id)
 
         async with self._session.begin():
             return await self._stock_out(
@@ -86,7 +101,7 @@ class InventoryService:
                 created_by=created_by,
                 actor_type=actor_type,
                 actor_id=audit_actor_id,
-                trace_id=trace_id or str(uuid4()),
+                trace_id=trace_id,
             )
 
     async def stock_in_in_transaction(
@@ -104,6 +119,12 @@ class InventoryService:
     ) -> Inventory:
         if not self._session.in_transaction():
             raise RuntimeError("stock_in_in_transaction requires an active transaction")
+        product_id = self._validate_product_id(product_id)
+        warehouse_code = self._validate_warehouse_code(warehouse_code)
+        reference_type, reference_id = self._validate_reference(
+            reference_type, reference_id
+        )
+        created_by = self._optional_identifier(created_by, "created_by")
         audit_actor_id = self._audit_actor_id(actor_type, actor_id)
         return await self._stock_in(
             product_id,
@@ -114,7 +135,7 @@ class InventoryService:
             created_by=created_by,
             actor_type=actor_type,
             actor_id=audit_actor_id,
-            trace_id=trace_id or str(uuid4()),
+            trace_id=self._trace_id(trace_id),
         )
 
     async def stock_out_in_transaction(
@@ -134,6 +155,12 @@ class InventoryService:
             raise RuntimeError(
                 "stock_out_in_transaction requires an active transaction"
             )
+        product_id = self._validate_product_id(product_id)
+        warehouse_code = self._validate_warehouse_code(warehouse_code)
+        reference_type, reference_id = self._validate_reference(
+            reference_type, reference_id
+        )
+        created_by = self._optional_identifier(created_by, "created_by")
         audit_actor_id = self._audit_actor_id(actor_type, actor_id)
         return await self._stock_out(
             product_id,
@@ -144,7 +171,7 @@ class InventoryService:
             created_by=created_by,
             actor_type=actor_type,
             actor_id=audit_actor_id,
-            trace_id=trace_id or str(uuid4()),
+            trace_id=self._trace_id(trace_id),
         )
 
     async def _stock_in(
@@ -241,11 +268,76 @@ class InventoryService:
 
     @staticmethod
     def _audit_actor_id(actor_type: ActorType, actor_id: str | None) -> str:
+        if not isinstance(actor_type, ActorType):
+            raise InvalidInventoryDataError("actor_type is invalid")
         if actor_id is not None and actor_id.strip():
             return actor_id.strip()
         if actor_type == ActorType.SYSTEM and actor_id is None:
             return "SYSTEM"
-        raise ValueError("audit actor_id is required for this actor_type")
+        raise InvalidInventoryDataError(
+            "audit actor_id is required for this actor_type"
+        )
+
+    @staticmethod
+    def _validate_product_id(product_id: object) -> int:
+        if isinstance(product_id, bool) or not isinstance(product_id, int) or product_id <= 0:
+            raise InvalidInventoryDataError("product_id must be a positive integer")
+        return product_id
+
+    @staticmethod
+    def _validate_warehouse_code(warehouse_code: object) -> str:
+        if not isinstance(warehouse_code, str) or not warehouse_code.strip():
+            raise InvalidInventoryDataError("warehouse_code must be a nonempty string")
+        normalized = warehouse_code.strip()
+        if len(normalized) > 64:
+            raise InvalidInventoryDataError("warehouse_code exceeds 64 characters")
+        return normalized
+
+    @staticmethod
+    def _validate_reference(
+        reference_type: object,
+        reference_id: object,
+    ) -> tuple[str | None, int | None]:
+        if (reference_type is None) != (reference_id is None):
+            raise InvalidInventoryDataError(
+                "reference_type and reference_id must be provided together"
+            )
+        if reference_type is None:
+            return None, None
+        if not isinstance(reference_type, str) or not reference_type.strip():
+            raise InvalidInventoryDataError("reference_type must be a nonempty string")
+        normalized_type = reference_type.strip()
+        if len(normalized_type) > 64:
+            raise InvalidInventoryDataError("reference_type exceeds 64 characters")
+        if (
+            isinstance(reference_id, bool)
+            or not isinstance(reference_id, int)
+            or reference_id <= 0
+        ):
+            raise InvalidInventoryDataError("reference_id must be a positive integer")
+        return normalized_type, reference_id
+
+    @staticmethod
+    def _optional_identifier(value: object, field_name: str) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise InvalidInventoryDataError(f"{field_name} must be a nonempty string")
+        normalized = value.strip()
+        if len(normalized) > 255:
+            raise InvalidInventoryDataError(f"{field_name} exceeds 255 characters")
+        return normalized
+
+    @staticmethod
+    def _trace_id(trace_id: object) -> str:
+        if trace_id is None:
+            return str(uuid4())
+        if not isinstance(trace_id, str) or not trace_id.strip():
+            raise InvalidInventoryDataError("trace_id must be a nonempty string")
+        normalized = trace_id.strip()
+        if len(normalized) > 64:
+            raise InvalidInventoryDataError("trace_id exceeds 64 characters")
+        return normalized
 
     @staticmethod
     def _inventory_snapshot(inventory: Inventory) -> dict[str, str]:

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 from app.core.enums import ActorType, InventoryStatus, MovementType
 from app.core.exceptions import (
     InsufficientStockError,
+    InvalidInventoryDataError,
     InvalidStockQuantityError,
     InventoryNotFoundError,
 )
@@ -200,8 +201,33 @@ class InventoryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.movements.save.assert_awaited_once()
 
     async def test_non_system_actor_requires_identifier(self) -> None:
-        with self.assertRaises(ValueError):
+        with self.assertRaises(InvalidInventoryDataError):
             await self.service.stock_in(1, "WH-A", 1, actor_type=ActorType.EMPLOYEE)
+
+        self.assertEqual(self.session.begin_calls, 0)
+        self.inventories.get_for_update.assert_not_awaited()
+
+    async def test_invalid_identity_and_reference_are_rejected_before_transaction(
+        self,
+    ) -> None:
+        invalid_calls = (
+            self.service.stock_in(0, "WH-A", 1),
+            self.service.stock_in(1, "  ", 1),
+            self.service.stock_in(1, "WH-A", 1, reference_type="ORDER"),
+            self.service.stock_in(1, "WH-A", 1, reference_id=10),
+            self.service.stock_in(
+                1,
+                "WH-A",
+                1,
+                reference_type="ORDER",
+                reference_id=0,
+            ),
+            self.service.stock_in(1, "WH-A", 1, trace_id="  "),
+        )
+
+        for call in invalid_calls:
+            with self.assertRaises(InvalidInventoryDataError):
+                await call
 
         self.assertEqual(self.session.begin_calls, 0)
         self.inventories.get_for_update.assert_not_awaited()
