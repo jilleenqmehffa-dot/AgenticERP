@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     BigInteger,
@@ -12,11 +12,16 @@ from sqlalchemy import (
     Text,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import ActorType, TaskStatus, TaskType
 from app.db.base import Base
+
+if TYPE_CHECKING:
+    from app.models.business_task_item import BusinessTaskItem
+    from app.models.employee import Employee
+    from app.models.inventory_count_item import InventoryCountItem
+    from app.models.warehouse import Warehouse
 
 
 class BusinessTask(Base):
@@ -55,17 +60,19 @@ class BusinessTask(Base):
         default=TaskStatus.PENDING,
         server_default=TaskStatus.PENDING.value,
     )
-    assigned_employee_id: Mapped[int] = mapped_column(
+    warehouse_id: Mapped[int] = mapped_column(
+        ForeignKey("warehouses.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    assignee_id: Mapped[int] = mapped_column(
         ForeignKey("employees.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
     source_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    planned_data: Mapped[dict[str, Any]] = mapped_column(JSONB)
-    actual_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    exception_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    cancel_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by_type: Mapped[ActorType] = mapped_column(
         Enum(
             ActorType,
@@ -80,11 +87,19 @@ class BusinessTask(Base):
         DateTime(timezone=True),
         server_default=func.now(),
     )
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
     cancelled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    failed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
@@ -94,6 +109,15 @@ class BusinessTask(Base):
         onupdate=func.now(),
     )
 
-    assigned_employee: Mapped["Employee"] = relationship(
+    warehouse: Mapped["Warehouse"] = relationship(back_populates="tasks")
+    assignee: Mapped["Employee"] = relationship(
         back_populates="assigned_tasks"
+    )
+    items: Mapped[list["BusinessTaskItem"]] = relationship(
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
+    inventory_count_items: Mapped[list["InventoryCountItem"]] = relationship(
+        back_populates="task",
+        cascade="all, delete-orphan",
     )

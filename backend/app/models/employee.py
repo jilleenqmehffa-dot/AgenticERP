@@ -46,7 +46,7 @@ class Employee(Base):
 
     role: Mapped["Role"] = relationship(back_populates="employees")
     assigned_tasks: Mapped[list["BusinessTask"]] = relationship(
-        back_populates="assigned_employee"
+        back_populates="assignee"
     )
     user_account: Mapped["UserAccount | None"] = relationship(
         back_populates="employee",
