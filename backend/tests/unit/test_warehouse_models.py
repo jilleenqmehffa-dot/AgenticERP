@@ -127,6 +127,21 @@ class WarehouseModelTests(unittest.TestCase):
             with self.subTest(model=model.__name__):
                 self.assertTrue(column_names <= set(model.__table__.columns.keys()))
 
+    def test_outbound_item_stores_packing_as_a_discrete_state(self) -> None:
+        columns = OutboundOrderItem.__table__.columns
+
+        self.assertIn("packed_at", columns)
+        self.assertNotIn("packed_quantity", columns)
+        self.assertTrue(columns.packed_at.nullable)
+
+    def test_reservation_keeps_bucket_identity(self) -> None:
+        columns = StockReservation.__table__.columns
+
+        self.assertIn("location_code", columns)
+        self.assertIn("lot_no", columns)
+        self.assertFalse(columns.location_code.nullable)
+        self.assertFalse(columns.lot_no.nullable)
+
 
 if __name__ == "__main__":
     unittest.main()

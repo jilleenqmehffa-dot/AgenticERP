@@ -1,6 +1,7 @@
+from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, ForeignKey, Numeric
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Numeric
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -36,6 +37,7 @@ class OutboundOrderItem(Base):
     picked_quantity: Mapped[Decimal] = mapped_column(
         Numeric(18, 3), default=Decimal("0.000"), server_default="0"
     )
+    packed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     shipped_quantity: Mapped[Decimal] = mapped_column(
         Numeric(18, 3), default=Decimal("0.000"), server_default="0"
     )
