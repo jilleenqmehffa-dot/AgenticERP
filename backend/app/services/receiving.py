@@ -1,0 +1,286 @@
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+from uuid import uuid4
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.enums import ActorType, ReceiptStatus
+from app.core.exceptions import (
+    InboundReceiptItemNotFoundError,
+    InvalidReceivingDataError,
+    InvalidReceivingStateError,
+)
+from app.models.audit_log import AuditLog
+from app.models.inbound_receipt_item import InboundReceiptItem
+from app.repositories.audit_log import AuditLogRepository
+from app.repositories.inbound_receipt import InboundReceiptRepository
+
+
+class ReceivingService:
+    def __init__(
+        self,
+        session: AsyncSession,
+        receipt_repository: InboundReceiptRepository | None = None,
+        audit_repository: AuditLogRepository | None = None,
+    ) -> None:
+        self._session = session
+        self._receipts = receipt_repository or InboundReceiptRepository(session)
+        self._audits = audit_repository or AuditLogRepository(session)
+
+    async def receive_and_inspect(
+        self,
+        inbound_receipt_item_id: int,
+        *,
+        received_quantity: Decimal | int,
+        accepted_quantity: Decimal | int,
+        defective_quantity: Decimal | int,
+        quarantined_quantity: Decimal | int = 0,
+        rejected_quantity: Decimal | int = 0,
+        expected_product_id: int,
+        actor_type: ActorType = ActorType.SYSTEM,
+        actor_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> InboundReceiptItem:
+        values = self._validate(
+            inbound_receipt_item_id=inbound_receipt_item_id,
+            received_quantity=received_quantity,
+            accepted_quantity=accepted_quantity,
+            defective_quantity=defective_quantity,
+            quarantined_quantity=quarantined_quantity,
+            rejected_quantity=rejected_quantity,
+            expected_product_id=expected_product_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            trace_id=trace_id,
+        )
+        async with self._session.begin():
+            return await self._receive_and_inspect_in_transaction(**values)
+
+    async def receive_and_inspect_in_transaction(
+        self,
+        inbound_receipt_item_id: int,
+        *,
+        received_quantity: Decimal | int,
+        accepted_quantity: Decimal | int,
+        defective_quantity: Decimal | int,
+        quarantined_quantity: Decimal | int = 0,
+        rejected_quantity: Decimal | int = 0,
+        expected_product_id: int,
+        actor_type: ActorType = ActorType.SYSTEM,
+        actor_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> InboundReceiptItem:
+        if not self._session.in_transaction():
+            raise RuntimeError(
+                "receive_and_inspect_in_transaction requires an active transaction"
+            )
+        values = self._validate(
+            inbound_receipt_item_id=inbound_receipt_item_id,
+            received_quantity=received_quantity,
+            accepted_quantity=accepted_quantity,
+            defective_quantity=defective_quantity,
+            quarantined_quantity=quarantined_quantity,
+            rejected_quantity=rejected_quantity,
+            expected_product_id=expected_product_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            trace_id=trace_id,
+        )
+        return await self._receive_and_inspect_in_transaction(**values)
+
+    async def _receive_and_inspect_in_transaction(
+        self,
+        *,
+        inbound_receipt_item_id: int,
+        received_quantity: Decimal,
+        accepted_quantity: Decimal,
+        defective_quantity: Decimal,
+        quarantined_quantity: Decimal,
+        rejected_quantity: Decimal,
+        expected_product_id: int,
+        actor_type: ActorType,
+        actor_id: str,
+        trace_id: str,
+    ) -> InboundReceiptItem:
+        item_reference = await self._receipts.get_item(inbound_receipt_item_id)
+        if item_reference is None:
+            raise InboundReceiptItemNotFoundError(inbound_receipt_item_id)
+        receipt = await self._receipts.get_for_update(
+            item_reference.inbound_receipt_id
+        )
+        if receipt is None:
+            raise InvalidReceivingDataError("inbound receipt does not exist")
+        if receipt.status not in {
+            ReceiptStatus.PENDING_RECEIPT,
+            ReceiptStatus.RECEIVING,
+        }:
+            raise InvalidReceivingStateError(receipt.id)
+
+        items = await self._receipts.get_items_for_update(receipt.id)
+        item = self._find_item(items, inbound_receipt_item_id)
+        if item.product_id != expected_product_id:
+            raise InvalidReceivingDataError(
+                "receiving task product does not match inbound receipt item"
+            )
+        if item.received_quantity + received_quantity > item.expected_quantity:
+            raise InvalidReceivingDataError(
+                "received quantity exceeds inbound receipt item remainder"
+            )
+
+        before = self._snapshot(item)
+        item.received_quantity += received_quantity
+        item.accepted_quantity += accepted_quantity
+        item.defective_quantity += defective_quantity
+        item.quarantined_quantity += quarantined_quantity
+        item.rejected_quantity += rejected_quantity
+        await self._receipts.save_item(item)
+
+        now = datetime.now(timezone.utc)
+        before_status = receipt.status
+        receipt.status = ReceiptStatus.RECEIVING
+        if items and all(self._item_is_complete(receipt_item) for receipt_item in items):
+            receipt.status = ReceiptStatus.INSPECTED
+            receipt.received_at = now
+            receipt.inspected_at = now
+        await self._receipts.save(receipt)
+
+        await self._audits.append(
+            AuditLog(
+                actor_type=actor_type,
+                actor_id=actor_id,
+                action="RECEIVE_AND_INSPECT_GOODS",
+                entity_type="INBOUND_RECEIPT_ITEM",
+                entity_id=str(item.id),
+                before_data=before,
+                after_data=self._snapshot(item),
+                trace_id=trace_id,
+                metadata_={
+                    "inbound_receipt_id": receipt.id,
+                    "receipt_status_before": before_status.value,
+                    "receipt_status_after": receipt.status.value,
+                },
+            )
+        )
+        return item
+
+    @staticmethod
+    def _find_item(
+        items: list[InboundReceiptItem],
+        item_id: int,
+    ) -> InboundReceiptItem:
+        for item in items:
+            if item.id == item_id:
+                return item
+        raise InboundReceiptItemNotFoundError(item_id)
+
+    @staticmethod
+    def _item_is_complete(item: InboundReceiptItem) -> bool:
+        disposition_total = (
+            item.accepted_quantity
+            + item.defective_quantity
+            + item.quarantined_quantity
+            + item.rejected_quantity
+        )
+        return (
+            item.received_quantity == item.expected_quantity
+            and disposition_total == item.received_quantity
+        )
+
+    @staticmethod
+    def _snapshot(item: InboundReceiptItem) -> dict[str, str]:
+        return {
+            "received_quantity": str(item.received_quantity),
+            "accepted_quantity": str(item.accepted_quantity),
+            "defective_quantity": str(item.defective_quantity),
+            "quarantined_quantity": str(item.quarantined_quantity),
+            "rejected_quantity": str(item.rejected_quantity),
+        }
+
+    @classmethod
+    def _validate(cls, **values: object) -> dict[str, object]:
+        received = cls._quantity(values["received_quantity"], "received_quantity")
+        accepted = cls._quantity(
+            values["accepted_quantity"], "accepted_quantity", allow_zero=True
+        )
+        defective = cls._quantity(
+            values["defective_quantity"], "defective_quantity", allow_zero=True
+        )
+        quarantined = cls._quantity(
+            values["quarantined_quantity"],
+            "quarantined_quantity",
+            allow_zero=True,
+        )
+        rejected = cls._quantity(
+            values["rejected_quantity"], "rejected_quantity", allow_zero=True
+        )
+        if accepted + defective + quarantined + rejected != received:
+            raise InvalidReceivingDataError(
+                "quality quantities must equal received_quantity"
+            )
+        actor_type = cls._actor_type(values["actor_type"])
+        return {
+            "inbound_receipt_item_id": cls._positive_id(
+                values["inbound_receipt_item_id"], "inbound_receipt_item_id"
+            ),
+            "received_quantity": received,
+            "accepted_quantity": accepted,
+            "defective_quantity": defective,
+            "quarantined_quantity": quarantined,
+            "rejected_quantity": rejected,
+            "expected_product_id": cls._positive_id(
+                values["expected_product_id"], "expected_product_id"
+            ),
+            "actor_type": actor_type,
+            "actor_id": cls._actor_id(actor_type, values["actor_id"]),
+            "trace_id": cls._trace_id(values["trace_id"]),
+        }
+
+    @staticmethod
+    def _positive_id(value: object, field_name: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise InvalidReceivingDataError(
+                f"{field_name} must be a positive integer"
+            )
+        return value
+
+    @staticmethod
+    def _quantity(
+        value: object,
+        field_name: str,
+        *,
+        allow_zero: bool = False,
+    ) -> Decimal:
+        if isinstance(value, bool):
+            raise InvalidReceivingDataError(f"invalid {field_name}")
+        try:
+            quantity = Decimal(str(value))
+        except (InvalidOperation, TypeError, ValueError):
+            raise InvalidReceivingDataError(f"invalid {field_name}") from None
+        if not quantity.is_finite() or quantity < 0 or (
+            not allow_zero and quantity == 0
+        ):
+            raise InvalidReceivingDataError(f"invalid {field_name}")
+        return quantity
+
+    @staticmethod
+    def _actor_type(value: object) -> ActorType:
+        try:
+            return ActorType(value)
+        except (TypeError, ValueError):
+            raise InvalidReceivingDataError("invalid actor_type") from None
+
+    @staticmethod
+    def _actor_id(actor_type: ActorType, value: object) -> str:
+        if value is None and actor_type == ActorType.SYSTEM:
+            return ActorType.SYSTEM.value
+        if not isinstance(value, str) or not value.strip():
+            raise InvalidReceivingDataError("actor_id is required")
+        return value.strip()
+
+    @staticmethod
+    def _trace_id(value: object) -> str:
+        if value is None:
+            return str(uuid4())
+        if not isinstance(value, str) or not value.strip():
+            raise InvalidReceivingDataError("trace_id must be a nonempty string")
+        return value.strip()
