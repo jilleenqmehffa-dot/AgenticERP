@@ -79,6 +79,8 @@ class StockInCapability(_StockCapability):
 
 
 class StockOutCapability(_StockCapability):
+    _RESERVED_SHIPMENT_SOURCE_TYPE = "OUTBOUND_ORDER"
+
     @staticmethod
     def _validate_locations(task: BusinessTask, item: BusinessTaskItem) -> None:
         if item.from_location_id is None:
@@ -91,7 +93,12 @@ class StockOutCapability(_StockCapability):
         data: ValidatedStockTask,
         trace_id: str,
     ) -> None:
-        await self._inventory.stock_out_in_transaction(
+        stock_out = (
+            self._inventory.ship_reserved_in_transaction
+            if task.source_type == self._RESERVED_SHIPMENT_SOURCE_TYPE
+            else self._inventory.stock_out_in_transaction
+        )
+        await stock_out(
             data.item.product_id,
             task.warehouse.code,
             data.actual.quantity,

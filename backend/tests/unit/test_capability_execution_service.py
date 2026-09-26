@@ -112,6 +112,7 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.audits.append = AsyncMock(side_effect=lambda audit: audit)
         self.inventory = MagicMock()
         self.inventory.stock_out_in_transaction = AsyncMock()
+        self.inventory.ship_reserved_in_transaction = AsyncMock()
         self.inventory.stock_in_in_transaction = AsyncMock()
         self.service = CapabilityExecutionService(
             self.session,  # type: ignore[arg-type]
@@ -138,6 +139,7 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
         inventory_call = self.inventory.stock_out_in_transaction.await_args
         self.assertEqual(inventory_call.args, (1, "WH-A", 40))
         self.assertEqual(inventory_call.kwargs["reference_id"], 1001)
+        self.inventory.ship_reserved_in_transaction.assert_not_awaited()
         self.assertEqual(self.audits.append.await_count, 2)
         started = self.audits.append.await_args_list[0].args[0]
         completed = self.audits.append.await_args_list[1].args[0]
@@ -145,6 +147,19 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(completed.action, "COMPLETE_TASK_EXECUTION")
         self.assertEqual(started.trace_id, completed.trace_id)
         self.assertEqual(started.trace_id, inventory_call.kwargs["trace_id"])
+
+    async def test_outbound_order_stock_out_consumes_reserved_stock(self) -> None:
+        self.task.source_type = "OUTBOUND_ORDER"
+        self.task.source_id = 2001
+
+        await self.service.execute(execution_id=701)
+
+        self.inventory.ship_reserved_in_transaction.assert_awaited_once()
+        inventory_call = self.inventory.ship_reserved_in_transaction.await_args
+        self.assertEqual(inventory_call.args, (1, "WH-A", 40))
+        self.assertEqual(inventory_call.kwargs["reference_type"], "BUSINESS_TASK")
+        self.assertEqual(inventory_call.kwargs["reference_id"], 1001)
+        self.inventory.stock_out_in_transaction.assert_not_awaited()
 
     async def test_succeeded_execution_is_idempotent(self) -> None:
         await self.service.execute(execution_id=701)
