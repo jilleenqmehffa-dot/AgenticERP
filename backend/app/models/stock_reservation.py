@@ -21,6 +21,12 @@ class StockReservation(Base):
     )
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
     warehouse_code: Mapped[str] = mapped_column(String(64), index=True)
+    location_code: Mapped[str] = mapped_column(
+        String(64), default="", server_default=""
+    )
+    lot_no: Mapped[str] = mapped_column(
+        String(100), default="", server_default=""
+    )
     quantity: Mapped[Decimal] = mapped_column(Numeric(18, 3))
     status: Mapped[ReservationStatus] = mapped_column(
         Enum(

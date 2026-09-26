@@ -73,6 +73,59 @@ class InsufficientBucketStockError(InventoryError):
         )
 
 
+class ReservationError(InventoryError):
+    """Base exception for controlled stock reservation operations."""
+
+
+class InvalidReservationDataError(ReservationError, ValueError):
+    pass
+
+
+class ReservationNotFoundError(ReservationError, LookupError):
+    def __init__(self, reservation_id: int) -> None:
+        super().__init__(f"stock reservation not found: {reservation_id}")
+
+
+class OutboundOrderItemNotFoundError(ReservationError, LookupError):
+    def __init__(self, item_id: int) -> None:
+        super().__init__(f"outbound order item not found: {item_id}")
+
+
+class InvalidReservationStateError(ReservationError):
+    def __init__(self, reservation_id: int) -> None:
+        super().__init__(
+            f"stock reservation state does not allow this operation: {reservation_id}"
+        )
+
+
+class PackingError(Exception):
+    """Base exception for controlled packing operations."""
+
+
+class InvalidPackingDataError(PackingError, ValueError):
+    pass
+
+
+class ReceivingError(Exception):
+    """Base exception for controlled receiving operations."""
+
+
+class InvalidReceivingDataError(ReceivingError, ValueError):
+    pass
+
+
+class InboundReceiptItemNotFoundError(ReceivingError, LookupError):
+    def __init__(self, item_id: int) -> None:
+        super().__init__(f"inbound receipt item not found: {item_id}")
+
+
+class InvalidReceivingStateError(ReceivingError):
+    def __init__(self, receipt_id: int) -> None:
+        super().__init__(
+            f"inbound receipt state does not allow receiving: {receipt_id}"
+        )
+
+
 class TaskError(Exception):
     """Base exception for controlled task operations."""
 
