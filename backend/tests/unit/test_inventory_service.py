@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from app.core.enums import ActorType, InventoryStatus, MovementType
 from app.core.exceptions import (
+    InsufficientReservedStockError,
     InsufficientStockError,
     InvalidInventoryDataError,
     InvalidStockQuantityError,
@@ -144,6 +145,63 @@ class InventoryServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(raised.exception.available_quantity, Decimal("20.000"))
         self.assertEqual(inventory.on_hand_quantity, Decimal("100.000"))
+        self.inventories.save.assert_not_awaited()
+        self.movements.save.assert_not_awaited()
+        self.audits.append.assert_not_awaited()
+
+    async def test_stock_out_does_not_consume_reserved_quantity(self) -> None:
+        inventory = make_inventory(on_hand="100.000", reserved="30.000")
+        self.inventories.get_for_update.return_value = inventory
+
+        await self.service.stock_out(1, "WH-A", 20)
+
+        self.assertEqual(inventory.on_hand_quantity, Decimal("80.000"))
+        self.assertEqual(inventory.reserved_quantity, Decimal("30.000"))
+        audit = self.audits.append.await_args.args[0]
+        self.assertEqual(audit.action, "STOCK_OUT")
+        self.assertEqual(audit.before_data["reserved_quantity"], "30.000")
+        self.assertEqual(audit.after_data["reserved_quantity"], "30.000")
+
+    async def test_ship_reserved_consumes_on_hand_and_reserved_together(self) -> None:
+        inventory = make_inventory(
+            on_hand="100.000",
+            reserved="60.000",
+            threshold="50.000",
+        )
+        self.inventories.get_for_update.return_value = inventory
+
+        result = await self.service.ship_reserved(
+            1,
+            "WH-A",
+            40,
+            reference_type="OUTBOUND_ORDER",
+            reference_id=2001,
+        )
+
+        self.assertIs(result, inventory)
+        self.assertEqual(inventory.on_hand_quantity, Decimal("60.000"))
+        self.assertEqual(inventory.reserved_quantity, Decimal("20.000"))
+        self.assertEqual(inventory.available_quantity, Decimal("40.000"))
+        self.assertEqual(inventory.status, InventoryStatus.LOW_STOCK)
+        movement = self.movements.save.await_args.args[0]
+        self.assertEqual(movement.movement_type, MovementType.OUT)
+        self.assertEqual(movement.quantity, Decimal("40"))
+        audit = self.audits.append.await_args.args[0]
+        self.assertEqual(audit.action, "SHIP_RESERVED")
+        self.assertEqual(audit.before_data["reserved_quantity"], "60.000")
+        self.assertEqual(audit.after_data["reserved_quantity"], "20.000")
+
+    async def test_ship_reserved_rejects_quantity_above_reservation(self) -> None:
+        inventory = make_inventory(on_hand="100.000", reserved="20.000")
+        self.inventories.get_for_update.return_value = inventory
+
+        with self.assertRaises(InsufficientReservedStockError) as raised:
+            await self.service.ship_reserved(1, "WH-A", 30)
+
+        self.assertEqual(raised.exception.reserved_quantity, Decimal("20.000"))
+        self.assertEqual(raised.exception.requested_quantity, Decimal("30"))
+        self.assertEqual(inventory.on_hand_quantity, Decimal("100.000"))
+        self.assertEqual(inventory.reserved_quantity, Decimal("20.000"))
         self.inventories.save.assert_not_awaited()
         self.movements.save.assert_not_awaited()
         self.audits.append.assert_not_awaited()

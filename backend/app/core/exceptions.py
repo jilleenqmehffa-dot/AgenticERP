@@ -32,6 +32,16 @@ class InsufficientStockError(InventoryError):
         )
 
 
+class InsufficientReservedStockError(InventoryError):
+    def __init__(self, reserved_quantity: Decimal, requested_quantity: Decimal) -> None:
+        self.reserved_quantity = reserved_quantity
+        self.requested_quantity = requested_quantity
+        super().__init__(
+            "insufficient reserved stock: "
+            f"reserved={reserved_quantity}, requested={requested_quantity}"
+        )
+
+
 class TaskError(Exception):
     """Base exception for controlled task operations."""
 

@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import ActorType, MovementType
 from app.core.exceptions import (
+    InsufficientReservedStockError,
     InsufficientStockError,
     InvalidInventoryDataError,
     InvalidStockQuantityError,
@@ -104,6 +105,42 @@ class InventoryService:
                 trace_id=trace_id,
             )
 
+    async def ship_reserved(
+        self,
+        product_id: int,
+        warehouse_code: str,
+        quantity: Decimal | int,
+        *,
+        reference_type: str | None = None,
+        reference_id: int | None = None,
+        created_by: str | None = None,
+        actor_type: ActorType = ActorType.SYSTEM,
+        actor_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> Inventory:
+        product_id = self._validate_product_id(product_id)
+        warehouse_code = self._validate_warehouse_code(warehouse_code)
+        shipment_quantity = self._validate_quantity(quantity)
+        reference_type, reference_id = self._validate_reference(
+            reference_type, reference_id
+        )
+        created_by = self._optional_identifier(created_by, "created_by")
+        audit_actor_id = self._audit_actor_id(actor_type, actor_id)
+        trace_id = self._trace_id(trace_id)
+
+        async with self._session.begin():
+            return await self._ship_reserved(
+                product_id,
+                warehouse_code,
+                shipment_quantity,
+                reference_type=reference_type,
+                reference_id=reference_id,
+                created_by=created_by,
+                actor_type=actor_type,
+                actor_id=audit_actor_id,
+                trace_id=trace_id,
+            )
+
     async def stock_in_in_transaction(
         self,
         product_id: int,
@@ -163,6 +200,42 @@ class InventoryService:
         created_by = self._optional_identifier(created_by, "created_by")
         audit_actor_id = self._audit_actor_id(actor_type, actor_id)
         return await self._stock_out(
+            product_id,
+            warehouse_code,
+            self._validate_quantity(quantity),
+            reference_type=reference_type,
+            reference_id=reference_id,
+            created_by=created_by,
+            actor_type=actor_type,
+            actor_id=audit_actor_id,
+            trace_id=self._trace_id(trace_id),
+        )
+
+    async def ship_reserved_in_transaction(
+        self,
+        product_id: int,
+        warehouse_code: str,
+        quantity: Decimal | int,
+        *,
+        reference_type: str | None = None,
+        reference_id: int | None = None,
+        created_by: str | None = None,
+        actor_type: ActorType = ActorType.SYSTEM,
+        actor_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> Inventory:
+        if not self._session.in_transaction():
+            raise RuntimeError(
+                "ship_reserved_in_transaction requires an active transaction"
+            )
+        product_id = self._validate_product_id(product_id)
+        warehouse_code = self._validate_warehouse_code(warehouse_code)
+        reference_type, reference_id = self._validate_reference(
+            reference_type, reference_id
+        )
+        created_by = self._optional_identifier(created_by, "created_by")
+        audit_actor_id = self._audit_actor_id(actor_type, actor_id)
+        return await self._ship_reserved(
             product_id,
             warehouse_code,
             self._validate_quantity(quantity),
@@ -266,6 +339,56 @@ class InventoryService:
         )
         return inventory
 
+    async def _ship_reserved(
+        self,
+        product_id: int,
+        warehouse_code: str,
+        quantity: Decimal,
+        *,
+        reference_type: str | None,
+        reference_id: int | None,
+        created_by: str | None,
+        actor_type: ActorType,
+        actor_id: str,
+        trace_id: str,
+    ) -> Inventory:
+        inventory = await self._get_locked_inventory(product_id, warehouse_code)
+        before_data = self._inventory_snapshot(inventory)
+        if inventory.reserved_quantity < quantity:
+            raise InsufficientReservedStockError(
+                inventory.reserved_quantity,
+                quantity,
+            )
+        inventory.on_hand_quantity -= quantity
+        inventory.reserved_quantity -= quantity
+        self._refresh_status(inventory)
+        movement = self._create_movement(
+            inventory=inventory,
+            movement_type=MovementType.OUT,
+            quantity=quantity,
+            reference_type=reference_type,
+            reference_id=reference_id,
+            created_by=created_by,
+        )
+        await self._inventories.save(inventory)
+        await self._movements.save(movement)
+        await self._audits.append(
+            self._inventory_audit_log(
+                inventory,
+                before_data=before_data,
+                movement_type=MovementType.OUT,
+                quantity=quantity,
+                reference_type=reference_type,
+                reference_id=reference_id,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                trace_id=trace_id,
+                movement_created_by=created_by,
+                action="SHIP_RESERVED",
+            )
+        )
+        return inventory
+
     @staticmethod
     def _audit_actor_id(actor_type: ActorType, actor_id: str | None) -> str:
         if not isinstance(actor_type, ActorType):
@@ -343,6 +466,7 @@ class InventoryService:
     def _inventory_snapshot(inventory: Inventory) -> dict[str, str]:
         return {
             "on_hand_quantity": str(inventory.on_hand_quantity),
+            "reserved_quantity": str(inventory.reserved_quantity),
             "status": inventory.status.value,
         }
 
@@ -360,11 +484,14 @@ class InventoryService:
         actor_id: str,
         trace_id: str,
         movement_created_by: str | None,
+        action: str | None = None,
     ) -> AuditLog:
         return AuditLog(
             actor_type=actor_type,
             actor_id=actor_id,
-            action="STOCK_IN" if movement_type == MovementType.IN else "STOCK_OUT",
+            action=action or (
+                "STOCK_IN" if movement_type == MovementType.IN else "STOCK_OUT"
+            ),
             entity_type="INVENTORY",
             entity_id=f"{inventory.product_id}:{inventory.warehouse_code}",
             before_data=before_data,
