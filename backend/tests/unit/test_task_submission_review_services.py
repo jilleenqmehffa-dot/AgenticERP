@@ -145,6 +145,43 @@ class TaskSubmissionServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.submissions.save.await_args.args[0].version, 2)
 
+    async def test_pack_submission_uses_packing_form(self) -> None:
+        self.task.task_type = TaskType.PACK
+        self.task.source_type = "OUTBOUND_ORDER_ITEM"
+        self.task.source_id = 101
+
+        await self.service.submit(
+            task_id=1001,
+            submitted_by_user_id=23,
+            form_data={"remark": "包装完成"},
+        )
+
+        submission = self.submissions.save.await_args.args[0]
+        self.assertNotIn("actual_quantity", submission.form_data)
+        self.assertEqual(submission.form_data["remark"], "包装完成")
+
+    async def test_receive_submission_preserves_employee_counts(self) -> None:
+        self.task.task_type = TaskType.RECEIVE
+        self.task.source_type = "INBOUND_RECEIPT_ITEM"
+        self.task.source_id = 101
+
+        await self.service.submit(
+            task_id=1001,
+            submitted_by_user_id=23,
+            form_data={
+                "received_quantity": "40.000",
+                "accepted_quantity": "38.000",
+                "defective_quantity": "2.000",
+            },
+        )
+
+        submission = self.submissions.save.await_args.args[0]
+        self.assertEqual(submission.form_data["received_quantity"], "40.000")
+        self.assertEqual(submission.form_data["accepted_quantity"], "38.000")
+        self.assertEqual(submission.form_data["defective_quantity"], "2.000")
+        self.assertEqual(submission.form_data["quarantined_quantity"], "0")
+        self.assertEqual(submission.form_data["rejected_quantity"], "0")
+
     async def test_invalid_form_and_state_do_not_create_submission(self) -> None:
         with self.assertRaises(InvalidTaskDataError):
             await self.service.submit(

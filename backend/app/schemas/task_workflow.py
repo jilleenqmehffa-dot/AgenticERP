@@ -63,6 +63,39 @@ class StockTaskSubmissionForm(BaseModel):
     remark: str | None = Field(default=None, min_length=1, max_length=2000)
 
 
+class PackTaskSubmissionForm(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    remark: str | None = Field(default=None, min_length=1, max_length=2000)
+
+
+class ReceiveTaskSubmissionForm(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    received_quantity: Decimal = Field(gt=0, max_digits=18, decimal_places=3)
+    accepted_quantity: Decimal = Field(ge=0, max_digits=18, decimal_places=3)
+    defective_quantity: Decimal = Field(ge=0, max_digits=18, decimal_places=3)
+    quarantined_quantity: Decimal = Field(
+        default=Decimal("0"), ge=0, max_digits=18, decimal_places=3
+    )
+    rejected_quantity: Decimal = Field(
+        default=Decimal("0"), ge=0, max_digits=18, decimal_places=3
+    )
+    remark: str | None = Field(default=None, min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_quality_total(self) -> "ReceiveTaskSubmissionForm":
+        quality_total = (
+            self.accepted_quantity
+            + self.defective_quantity
+            + self.quarantined_quantity
+            + self.rejected_quantity
+        )
+        if quality_total != self.received_quantity:
+            raise ValueError("quality quantities must equal received_quantity")
+        return self
+
+
 class TaskSubmissionRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

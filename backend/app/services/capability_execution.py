@@ -10,6 +10,7 @@ from app.core.enums import (
     ExecutionStatus,
     SubmissionStatus,
     TaskStatus,
+    TaskType,
 )
 from app.core.exceptions import (
     InactiveEmployeeError,
@@ -30,6 +31,8 @@ from app.repositories.employee import EmployeeRepository
 from app.repositories.task_execution import TaskExecutionRepository
 from app.repositories.task_submission import TaskSubmissionRepository
 from app.services.inventory import InventoryService
+from app.services.packing import PackingService
+from app.services.receiving import ReceivingService
 from app.services.task_submission import TaskSubmissionService
 
 
@@ -43,6 +46,8 @@ class CapabilityExecutionService:
         employee_repository: EmployeeRepository | None = None,
         audit_repository: AuditLogRepository | None = None,
         inventory_service: InventoryService | None = None,
+        packing_service: PackingService | None = None,
+        receiving_service: ReceivingService | None = None,
     ) -> None:
         self._session = session
         self._executions = execution_repository or TaskExecutionRepository(session)
@@ -51,7 +56,9 @@ class CapabilityExecutionService:
         self._employees = employee_repository or EmployeeRepository(session)
         self._audits = audit_repository or AuditLogRepository(session)
         self._dispatcher = CapabilityDispatcher(
-            inventory_service or InventoryService(session)
+            inventory_service or InventoryService(session),
+            packing_service or PackingService(session),
+            receiving_service or ReceivingService(session),
         )
 
     async def execute(self, *, execution_id: int) -> TaskExecution:
@@ -105,8 +112,9 @@ class CapabilityExecutionService:
                 if executor.id != task.assignee_id:
                     raise TaskPermissionError(task.id)
 
-                form = TaskSubmissionService.validate_stock_form(
-                    submission.form_data
+                form = TaskSubmissionService.validate_form(
+                    task.task_type,
+                    submission.form_data,
                 )
                 attempt_trace_id = str(uuid4())
                 previous_execution_status = execution.status
@@ -132,11 +140,24 @@ class CapabilityExecutionService:
                 execution_started = True
 
                 items = await self._tasks.get_items_for_update(task.id)
+                actual_data = (
+                    {}
+                    if task.task_type == TaskType.PACK
+                    else (
+                        {
+                            key: value
+                            for key, value in form.items()
+                            if key != "remark"
+                        }
+                        if task.task_type == TaskType.RECEIVE
+                        else {"quantity": form["actual_quantity"]}
+                    )
+                )
                 await self._dispatcher.execute(
                     task,
                     executor,
                     items,
-                    {"quantity": form["actual_quantity"]},
+                    actual_data,
                     attempt_trace_id,
                 )
 

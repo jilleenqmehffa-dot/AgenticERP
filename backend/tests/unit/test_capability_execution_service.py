@@ -114,6 +114,10 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.inventory.stock_out_in_transaction = AsyncMock()
         self.inventory.ship_reserved_in_transaction = AsyncMock()
         self.inventory.stock_in_in_transaction = AsyncMock()
+        self.packing = MagicMock()
+        self.packing.mark_packed_in_transaction = AsyncMock()
+        self.receiving = MagicMock()
+        self.receiving.receive_and_inspect_in_transaction = AsyncMock()
         self.service = CapabilityExecutionService(
             self.session,  # type: ignore[arg-type]
             self.executions,
@@ -122,6 +126,8 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
             self.employees,
             self.audits,
             self.inventory,
+            self.packing,
+            self.receiving,
         )
 
     async def test_execute_runs_capability_and_marks_execution_succeeded(self) -> None:
@@ -160,6 +166,52 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(inventory_call.kwargs["reference_type"], "BUSINESS_TASK")
         self.assertEqual(inventory_call.kwargs["reference_id"], 1001)
         self.inventory.stock_out_in_transaction.assert_not_awaited()
+
+    async def test_pack_completes_goods_task_without_changing_inventory(self) -> None:
+        self.task.task_type = TaskType.PACK
+        self.task.source_type = "OUTBOUND_ORDER_ITEM"
+        self.task.source_id = 2001
+        self.submission.form_data = {"remark": "包装完成"}
+        self.execution.capability_name = TaskType.PACK.value
+
+        await self.service.execute(execution_id=701)
+
+        self.packing.mark_packed_in_transaction.assert_awaited_once()
+        packing_call = self.packing.mark_packed_in_transaction.await_args
+        self.assertEqual(packing_call.args, (2001,))
+        self.assertIsNone(self.item.actual_quantity)
+        self.assertEqual(self.task.status, TaskStatus.COMPLETED)
+        self.inventory.stock_out_in_transaction.assert_not_awaited()
+        self.inventory.ship_reserved_in_transaction.assert_not_awaited()
+
+    async def test_receive_completes_task_without_changing_inventory(self) -> None:
+        self.task.task_type = TaskType.RECEIVE
+        self.task.source_type = "INBOUND_RECEIPT_ITEM"
+        self.task.source_id = 3001
+        self.item.planned_quantity = Decimal("40")
+        self.submission.form_data = {
+            "received_quantity": "40.000",
+            "accepted_quantity": "38.000",
+            "defective_quantity": "2.000",
+            "quarantined_quantity": "0.000",
+            "rejected_quantity": "0.000",
+            "remark": "两件破损",
+        }
+        self.execution.capability_name = TaskType.RECEIVE.value
+
+        await self.service.execute(execution_id=701)
+
+        self.receiving.receive_and_inspect_in_transaction.assert_awaited_once()
+        receive_call = self.receiving.receive_and_inspect_in_transaction.await_args
+        self.assertEqual(receive_call.args, (3001,))
+        self.assertEqual(
+            receive_call.kwargs["received_quantity"], Decimal("40.000")
+        )
+        self.assertEqual(receive_call.kwargs["accepted_quantity"], Decimal("38.000"))
+        self.assertEqual(receive_call.kwargs["defective_quantity"], Decimal("2.000"))
+        self.assertEqual(self.item.actual_quantity, Decimal("40.000"))
+        self.assertEqual(self.task.status, TaskStatus.COMPLETED)
+        self.inventory.stock_in_in_transaction.assert_not_awaited()
 
     async def test_succeeded_execution_is_idempotent(self) -> None:
         await self.service.execute(execution_id=701)

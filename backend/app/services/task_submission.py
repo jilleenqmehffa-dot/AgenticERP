@@ -8,7 +8,13 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.capabilities.dispatcher import CapabilityDispatcher
-from app.core.enums import ActorType, EmployeeStatus, SubmissionStatus, TaskStatus
+from app.core.enums import (
+    ActorType,
+    EmployeeStatus,
+    SubmissionStatus,
+    TaskStatus,
+    TaskType,
+)
 from app.core.exceptions import (
     InactiveEmployeeError,
     InvalidTaskDataError,
@@ -24,7 +30,11 @@ from app.repositories.audit_log import AuditLogRepository
 from app.repositories.business_task import BusinessTaskRepository
 from app.repositories.employee import EmployeeRepository
 from app.repositories.task_submission import TaskSubmissionRepository
-from app.schemas.task_workflow import StockTaskSubmissionForm
+from app.schemas.task_workflow import (
+    PackTaskSubmissionForm,
+    ReceiveTaskSubmissionForm,
+    StockTaskSubmissionForm,
+)
 
 
 class TaskSubmissionService:
@@ -72,7 +82,7 @@ class TaskSubmissionService:
             if not CapabilityDispatcher.supports(task.task_type):
                 raise UnsupportedTaskTypeError(task.task_type)
 
-            normalized_form = self.validate_stock_form(form_data)
+            normalized_form = self.validate_form(task.task_type, form_data)
             payload_hash = self._payload_hash(normalized_form)
             previous = await self._submissions.get_latest_for_update(task_id)
             if previous is not None and previous.payload_hash == payload_hash:
@@ -118,6 +128,34 @@ class TaskSubmissionService:
         except ValidationError:
             raise InvalidTaskDataError("invalid stock task submission") from None
         return form.model_dump(mode="json", exclude_none=True)
+
+    @staticmethod
+    def validate_pack_form(form_data: object) -> dict[str, Any]:
+        try:
+            form = PackTaskSubmissionForm.model_validate(form_data)
+        except ValidationError:
+            raise InvalidTaskDataError("invalid packing task submission") from None
+        return form.model_dump(mode="json", exclude_none=True)
+
+    @staticmethod
+    def validate_receive_form(form_data: object) -> dict[str, Any]:
+        try:
+            form = ReceiveTaskSubmissionForm.model_validate(form_data)
+        except ValidationError:
+            raise InvalidTaskDataError("invalid receiving task submission") from None
+        return form.model_dump(mode="json", exclude_none=True)
+
+    @classmethod
+    def validate_form(
+        cls,
+        task_type: TaskType,
+        form_data: object,
+    ) -> dict[str, Any]:
+        if task_type == TaskType.PACK:
+            return cls.validate_pack_form(form_data)
+        if task_type == TaskType.RECEIVE:
+            return cls.validate_receive_form(form_data)
+        return cls.validate_stock_form(form_data)
 
     @staticmethod
     def _payload_hash(form_data: dict[str, Any]) -> str:
