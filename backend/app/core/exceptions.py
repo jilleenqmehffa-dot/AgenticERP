@@ -42,6 +42,37 @@ class InsufficientReservedStockError(InventoryError):
         )
 
 
+class InvalidInventoryBucketDataError(InventoryError, ValueError):
+    pass
+
+
+class InventoryBucketNotFoundError(InventoryError, LookupError):
+    def __init__(
+        self,
+        product_id: int,
+        warehouse_code: str,
+        location_code: str,
+        lot_no: str,
+        stock_status: object,
+    ) -> None:
+        super().__init__(
+            "inventory bucket not found: "
+            f"product={product_id}, warehouse={warehouse_code!r}, "
+            f"location={location_code!r}, lot={lot_no!r}, "
+            f"status={stock_status}"
+        )
+
+
+class InsufficientBucketStockError(InventoryError):
+    def __init__(self, bucket_quantity: Decimal, requested_quantity: Decimal) -> None:
+        self.bucket_quantity = bucket_quantity
+        self.requested_quantity = requested_quantity
+        super().__init__(
+            "insufficient inventory bucket stock: "
+            f"bucket={bucket_quantity}, requested={requested_quantity}"
+        )
+
+
 class TaskError(Exception):
     """Base exception for controlled task operations."""
 
