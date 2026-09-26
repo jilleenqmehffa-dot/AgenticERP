@@ -14,14 +14,20 @@ if TYPE_CHECKING:
 
 
 class CapabilityDispatcher:
+    _CAPABILITY_TYPES = {
+        TaskType.STOCK_IN: StockInCapability,
+        TaskType.STOCK_OUT: StockOutCapability,
+    }
+
     def __init__(self, inventory_service: InventoryService) -> None:
         self._capabilities = {
-            TaskType.STOCK_IN: StockInCapability(inventory_service),
-            TaskType.STOCK_OUT: StockOutCapability(inventory_service),
+            task_type: capability_type(inventory_service)
+            for task_type, capability_type in self._CAPABILITY_TYPES.items()
         }
 
-    def supports(self, task_type: TaskType) -> bool:
-        return task_type in self._capabilities
+    @classmethod
+    def supports(cls, task_type: TaskType) -> bool:
+        return task_type in cls._CAPABILITY_TYPES
 
     async def execute(
         self,

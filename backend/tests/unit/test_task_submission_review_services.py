@@ -2,7 +2,13 @@ import unittest
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
-from app.core.enums import EmployeeStatus, SubmissionStatus, TaskStatus, TaskType
+from app.core.enums import (
+    EmployeeStatus,
+    ExecutionStatus,
+    SubmissionStatus,
+    TaskStatus,
+    TaskType,
+)
 from app.core.exceptions import (
     InvalidTaskDataError,
     InvalidTaskStateError,
@@ -13,6 +19,7 @@ from app.models.business_task_item import BusinessTaskItem
 from app.models.employee import Employee
 from app.models.role import Role
 from app.models.task_submission import TaskSubmission
+from app.models.task_execution import TaskExecution
 from app.models.warehouse import Warehouse
 from app.services.task_review import TaskReviewService
 from app.services.task_submission import TaskSubmissionService
@@ -85,14 +92,12 @@ class TaskSubmissionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.employees.get_for_update = AsyncMock(return_value=self.employee)
         self.audits = MagicMock()
         self.audits.append = AsyncMock(side_effect=lambda audit: audit)
-        self.inventory = MagicMock()
         self.service = TaskSubmissionService(
             self.session,  # type: ignore[arg-type]
             self.tasks,
             self.submissions,
             self.employees,
             self.audits,
-            self.inventory,
         )
 
     async def test_submit_saves_form_and_moves_task_to_pending_review(self) -> None:
@@ -203,6 +208,9 @@ class TaskReviewServiceTests(unittest.IsolatedAsyncioTestCase):
         self.tasks.get_items_for_update = AsyncMock(return_value=[self.item])
         self.tasks.save = AsyncMock(side_effect=lambda task: task)
         self.submissions = MagicMock()
+        self.submissions.get_latest_for_update = AsyncMock(
+            return_value=self.submission
+        )
         self.submissions.get_pending_for_update = AsyncMock(
             return_value=self.submission
         )
@@ -212,42 +220,54 @@ class TaskReviewServiceTests(unittest.IsolatedAsyncioTestCase):
         self.employees.get_for_update = AsyncMock(return_value=self.executor)
         self.audits = MagicMock()
         self.audits.append = AsyncMock(side_effect=lambda audit: audit)
-        self.inventory = MagicMock()
-        self.inventory.stock_out_in_transaction = AsyncMock()
-        self.inventory.stock_in_in_transaction = AsyncMock()
+        self.executions = MagicMock()
+        self.executions.get_for_task_submission_capability_for_update = AsyncMock(
+            return_value=None
+        )
+
+        async def save_execution(execution: TaskExecution) -> TaskExecution:
+            execution.id = execution.id or 701
+            return execution
+
+        self.executions.save = AsyncMock(side_effect=save_execution)
         self.service = TaskReviewService(
             self.session,  # type: ignore[arg-type]
             self.tasks,
             self.submissions,
             self.employees,
             self.audits,
-            self.inventory,
+            self.executions,
         )
 
-    async def test_approve_executes_capability_and_completes_task(self) -> None:
+    async def test_approve_creates_pending_execution_without_running_capability(
+        self,
+    ) -> None:
         result = await self.service.approve(task_id=1001, reviewer_user_id=99)
 
-        self.assertIs(result, self.task)
+        self.assertEqual(result.id, 701)
+        self.assertEqual(result.status, ExecutionStatus.PENDING)
+        self.assertEqual(result.task_id, 1001)
+        self.assertEqual(result.submission_id, 501)
+        self.assertEqual(result.capability_name, "STOCK_OUT")
+        self.assertEqual(len(result.idempotency_key), 64)
         self.assertEqual(self.submission.status, SubmissionStatus.APPROVED)
         self.assertEqual(self.submission.reviewed_by_id, 99)
         self.assertIsNotNone(self.submission.reviewed_at)
-        self.assertEqual(self.task.status, TaskStatus.COMPLETED)
-        self.assertEqual(self.task.reason, "实际出库40件")
-        self.assertEqual(self.item.actual_quantity, Decimal("40"))
-        self.inventory.stock_out_in_transaction.assert_awaited_once()
-        call = self.inventory.stock_out_in_transaction.await_args
-        self.assertEqual(call.args, (1, "WH-A", 40))
-        self.assertEqual(call.kwargs["reference_id"], 1001)
-        self.assertEqual(self.audits.append.await_count, 2)
-        approval_audit = self.audits.append.await_args_list[0].args[0]
-        completion_audit = self.audits.append.await_args_list[1].args[0]
+        self.assertEqual(self.task.status, TaskStatus.APPROVED_FOR_EXECUTION)
+        self.assertIsNone(self.item.actual_quantity)
+        self.assertEqual(self.audits.append.await_count, 1)
+        approval_audit = self.audits.append.await_args.args[0]
         self.assertEqual(approval_audit.action, "APPROVE_TASK_SUBMISSION")
-        self.assertEqual(completion_audit.action, "COMPLETE_APPROVED_TASK")
-        self.assertEqual(approval_audit.trace_id, completion_audit.trace_id)
-        self.assertEqual(
-            approval_audit.trace_id,
-            call.kwargs["trace_id"],
-        )
+
+    async def test_repeated_approve_returns_existing_execution(self) -> None:
+        first = await self.service.approve(task_id=1001, reviewer_user_id=99)
+        self.executions.get_for_task_submission_capability_for_update.return_value = first
+
+        second = await self.service.approve(task_id=1001, reviewer_user_id=99)
+
+        self.assertIs(second, first)
+        self.executions.save.assert_awaited_once()
+        self.audits.append.assert_awaited_once()
 
     async def test_reject_requests_revision_without_executing_capability(self) -> None:
         result = await self.service.reject(
@@ -264,7 +284,7 @@ class TaskReviewServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.submission.review_reason, "请重新核对数量")
         self.assertEqual(self.task.status, TaskStatus.CHANGES_REQUESTED)
         self.assertEqual(self.task.reason, "请重新核对数量")
-        self.inventory.stock_out_in_transaction.assert_not_awaited()
+        self.executions.save.assert_not_awaited()
         audit = self.audits.append.await_args.args[0]
         self.assertEqual(audit.action, "REJECT_TASK_SUBMISSION")
 
@@ -275,22 +295,7 @@ class TaskReviewServiceTests(unittest.IsolatedAsyncioTestCase):
             await self.service.approve(task_id=1001, reviewer_user_id=99)
 
         self.submissions.save.assert_not_awaited()
-        self.inventory.stock_out_in_transaction.assert_not_awaited()
-
-    async def test_capability_failure_aborts_approval_transaction(self) -> None:
-        self.inventory.stock_out_in_transaction.side_effect = RuntimeError(
-            "inventory unavailable"
-        )
-
-        with self.assertRaisesRegex(RuntimeError, "inventory unavailable"):
-            await self.service.approve(task_id=1001, reviewer_user_id=99)
-
-        self.assertIs(self.session.transaction.exception_type, RuntimeError)
-        self.assertEqual(self.audits.append.await_count, 1)
-        self.assertEqual(
-            self.audits.append.await_args.args[0].action,
-            "APPROVE_TASK_SUBMISSION",
-        )
+        self.executions.save.assert_not_awaited()
 
 
 if __name__ == "__main__":

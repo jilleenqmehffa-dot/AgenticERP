@@ -18,6 +18,13 @@ class TaskSubmissionRepository:
             .with_for_update()
         )
 
+    async def get_for_update(self, submission_id: int) -> TaskSubmission | None:
+        return await self._session.scalar(
+            select(TaskSubmission)
+            .where(TaskSubmission.id == submission_id)
+            .with_for_update()
+        )
+
     async def get_pending_for_update(self, task_id: int) -> TaskSubmission | None:
         return await self._session.scalar(
             select(TaskSubmission)

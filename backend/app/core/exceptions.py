@@ -75,6 +75,21 @@ class TaskReviewPermissionError(TaskError, PermissionError):
         super().__init__(f"employee is not allowed to review tasks: {employee_id}")
 
 
+class TaskExecutionNotFoundError(TaskError, LookupError):
+    def __init__(self, execution_id: int) -> None:
+        super().__init__(f"task execution not found: {execution_id}")
+
+
+class InvalidTaskExecutionStateError(TaskError):
+    def __init__(self, execution_id: int) -> None:
+        super().__init__(f"task execution state does not allow this operation: {execution_id}")
+
+
+class TaskExecutionAlreadyRunningError(TaskError):
+    def __init__(self, execution_id: int) -> None:
+        super().__init__(f"task execution is already running: {execution_id}")
+
+
 class InvalidCredentialsError(PermissionError):
     def __init__(self) -> None:
         super().__init__("invalid account credentials")

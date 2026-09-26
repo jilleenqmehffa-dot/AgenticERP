@@ -1,30 +1,34 @@
+import hashlib
 from datetime import datetime, timezone
-from typing import Any
 from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.capabilities.dispatcher import CapabilityDispatcher
-from app.core.enums import ActorType, EmployeeStatus, SubmissionStatus, TaskStatus
+from app.core.enums import (
+    ActorType,
+    EmployeeStatus,
+    ExecutionStatus,
+    SubmissionStatus,
+    TaskStatus,
+)
 from app.core.exceptions import (
     InactiveEmployeeError,
     InvalidTaskDataError,
     InvalidTaskStateError,
     TaskNotFoundError,
-    TaskPermissionError,
     TaskReviewPermissionError,
     TaskSubmissionNotFoundError,
 )
 from app.models.audit_log import AuditLog
 from app.models.business_task import BusinessTask
 from app.models.employee import Employee
+from app.models.task_execution import TaskExecution
 from app.models.task_submission import TaskSubmission
 from app.repositories.audit_log import AuditLogRepository
 from app.repositories.business_task import BusinessTaskRepository
 from app.repositories.employee import EmployeeRepository
+from app.repositories.task_execution import TaskExecutionRepository
 from app.repositories.task_submission import TaskSubmissionRepository
-from app.services.inventory import InventoryService
-from app.services.task_submission import TaskSubmissionService
 
 
 class TaskReviewService:
@@ -35,15 +39,15 @@ class TaskReviewService:
         submission_repository: TaskSubmissionRepository | None = None,
         employee_repository: EmployeeRepository | None = None,
         audit_repository: AuditLogRepository | None = None,
-        inventory_service: InventoryService | None = None,
+        execution_repository: TaskExecutionRepository | None = None,
     ) -> None:
         self._session = session
         self._tasks = task_repository or BusinessTaskRepository(session)
         self._submissions = submission_repository or TaskSubmissionRepository(session)
         self._employees = employee_repository or EmployeeRepository(session)
         self._audits = audit_repository or AuditLogRepository(session)
-        self._dispatcher = CapabilityDispatcher(
-            inventory_service or InventoryService(session)
+        self._executions = execution_repository or TaskExecutionRepository(
+            session
         )
 
     async def approve(
@@ -51,23 +55,49 @@ class TaskReviewService:
         *,
         task_id: int,
         reviewer_user_id: int,
-    ) -> BusinessTask:
+    ) -> TaskExecution:
         task_id = self._positive_id(task_id, "task_id")
         reviewer_user_id = self._positive_id(
             reviewer_user_id, "reviewer_user_id"
         )
 
         async with self._session.begin():
-            task, submission, reviewer = await self._get_review_context(
-                task_id, reviewer_user_id
+            task = await self._tasks.get_for_update(task_id)
+            if task is None:
+                raise TaskNotFoundError(task_id)
+            submission = await self._submissions.get_latest_for_update(task_id)
+            if submission is None:
+                raise TaskSubmissionNotFoundError(task_id)
+            reviewer = await self._get_reviewer(submission, reviewer_user_id)
+            capability_name = task.task_type.value
+            existing = await (
+                self._executions.get_for_task_submission_capability_for_update(
+                    task.id,
+                    submission.id,
+                    capability_name,
+                )
             )
-            executor = await self._employees.get_for_update(submission.submitted_by_id)
-            if executor is None or executor.status != EmployeeStatus.ACTIVE:
-                raise InactiveEmployeeError(submission.submitted_by_id)
-            if executor.id != task.assignee_id:
-                raise TaskPermissionError(task.id)
+            if (
+                submission.status == SubmissionStatus.APPROVED
+                and task.status
+                in {
+                    TaskStatus.APPROVED_FOR_EXECUTION,
+                    TaskStatus.EXECUTING,
+                    TaskStatus.COMPLETED,
+                    TaskStatus.EXECUTION_FAILED,
+                }
+            ):
+                if existing is None:
+                    raise InvalidTaskStateError(task_id)
+                return existing
+            if (
+                task.status != TaskStatus.PENDING_REVIEW
+                or submission.status != SubmissionStatus.PENDING_REVIEW
+            ):
+                raise InvalidTaskStateError(task_id)
+            if existing is not None:
+                return existing
 
-            form = TaskSubmissionService.validate_stock_form(submission.form_data)
             now = datetime.now(timezone.utc)
             trace_id = str(uuid4())
             submission.status = SubmissionStatus.APPROVED
@@ -78,6 +108,19 @@ class TaskReviewService:
 
             task.status = TaskStatus.APPROVED_FOR_EXECUTION
             await self._tasks.save(task)
+            execution = TaskExecution(
+                task_id=task.id,
+                submission_id=submission.id,
+                capability_name=capability_name,
+                idempotency_key=self._idempotency_key(
+                    task.id,
+                    submission.id,
+                    capability_name,
+                ),
+                status=ExecutionStatus.PENDING,
+                attempt_count=0,
+            )
+            await self._executions.save(execution)
             await self._audits.append(
                 self._review_audit(
                     task,
@@ -88,38 +131,7 @@ class TaskReviewService:
                     after_status=TaskStatus.APPROVED_FOR_EXECUTION,
                 )
             )
-
-            items = await self._tasks.get_items_for_update(task.id)
-            await self._dispatcher.execute(
-                task,
-                executor,
-                items,
-                {"quantity": form["actual_quantity"]},
-                trace_id,
-            )
-
-            task.reason = form.get("remark")
-            task.status = TaskStatus.COMPLETED
-            task.completed_at = now
-            await self._tasks.save(task)
-            await self._audits.append(
-                AuditLog(
-                    actor_type=ActorType.EMPLOYEE,
-                    actor_id=str(reviewer.id),
-                    action="COMPLETE_APPROVED_TASK",
-                    entity_type="BUSINESS_TASK",
-                    entity_id=str(task.id),
-                    before_data={"status": TaskStatus.APPROVED_FOR_EXECUTION.value},
-                    after_data={
-                        "status": TaskStatus.COMPLETED.value,
-                        "submission_version": submission.version,
-                        "completed_at": task.completed_at.isoformat(),
-                    },
-                    trace_id=trace_id,
-                    metadata_={},
-                )
-            )
-        return task
+        return execution
 
     async def reject(
         self,
@@ -176,15 +188,42 @@ class TaskReviewService:
         submission = await self._submissions.get_pending_for_update(task_id)
         if submission is None:
             raise TaskSubmissionNotFoundError(task_id)
+        reviewer = await self._employees.get_with_role_for_update(reviewer_user_id)
+        reviewer = self._validate_reviewer(
+            submission, reviewer, reviewer_user_id
+        )
+        return task, submission, reviewer
+
+    async def _get_reviewer(
+        self,
+        submission: TaskSubmission,
+        reviewer_user_id: int,
+    ) -> Employee:
+        reviewer = await self._employees.get_with_role_for_update(reviewer_user_id)
+        return self._validate_reviewer(submission, reviewer, reviewer_user_id)
+
+    @staticmethod
+    def _validate_reviewer(
+        submission: TaskSubmission,
+        reviewer: Employee | None,
+        reviewer_user_id: int,
+    ) -> Employee:
         if submission.submitted_by_id == reviewer_user_id:
             raise TaskReviewPermissionError(reviewer_user_id)
-
-        reviewer = await self._employees.get_with_role_for_update(reviewer_user_id)
         if reviewer is None or reviewer.status != EmployeeStatus.ACTIVE:
             raise InactiveEmployeeError(reviewer_user_id)
         if reviewer.role is None or reviewer.role.code != "MANAGER":
             raise TaskReviewPermissionError(reviewer_user_id)
-        return task, submission, reviewer
+        return reviewer
+
+    @staticmethod
+    def _idempotency_key(
+        task_id: int,
+        submission_id: int,
+        capability_name: str,
+    ) -> str:
+        raw = f"{task_id}:{submission_id}:{capability_name}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _review_audit(

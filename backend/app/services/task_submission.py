@@ -25,7 +25,6 @@ from app.repositories.business_task import BusinessTaskRepository
 from app.repositories.employee import EmployeeRepository
 from app.repositories.task_submission import TaskSubmissionRepository
 from app.schemas.task_workflow import StockTaskSubmissionForm
-from app.services.inventory import InventoryService
 
 
 class TaskSubmissionService:
@@ -36,16 +35,12 @@ class TaskSubmissionService:
         submission_repository: TaskSubmissionRepository | None = None,
         employee_repository: EmployeeRepository | None = None,
         audit_repository: AuditLogRepository | None = None,
-        inventory_service: InventoryService | None = None,
     ) -> None:
         self._session = session
         self._tasks = task_repository or BusinessTaskRepository(session)
         self._submissions = submission_repository or TaskSubmissionRepository(session)
         self._employees = employee_repository or EmployeeRepository(session)
         self._audits = audit_repository or AuditLogRepository(session)
-        self._dispatcher = CapabilityDispatcher(
-            inventory_service or InventoryService(session)
-        )
 
     async def submit(
         self,
@@ -74,7 +69,7 @@ class TaskSubmissionService:
             employee = await self._employees.get_for_update(submitted_by_user_id)
             if employee is None or employee.status != EmployeeStatus.ACTIVE:
                 raise InactiveEmployeeError(submitted_by_user_id)
-            if not self._dispatcher.supports(task.task_type):
+            if not CapabilityDispatcher.supports(task.task_type):
                 raise UnsupportedTaskTypeError(task.task_type)
 
             normalized_form = self.validate_stock_form(form_data)

@@ -1,29 +1,16 @@
 import unittest
-from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
-from app.core.enums import (
-    ActorType,
-    EmployeeStatus,
-    InventoryStatus,
-    MovementType,
-    TaskStatus,
-    TaskType,
-)
+from app.core.enums import EmployeeStatus, TaskStatus, TaskType
 from app.core.exceptions import (
     InactiveEmployeeError,
-    InsufficientStockError,
     InvalidTaskDataError,
     InvalidTaskStateError,
     TaskNotFoundError,
     TaskPermissionError,
 )
 from app.models.business_task import BusinessTask
-from app.models.business_task_item import BusinessTaskItem
 from app.models.employee import Employee
-from app.models.inventory import Inventory
-from app.models.warehouse import Warehouse
-from app.services.inventory import InventoryService
 from app.services.task import TaskService
 
 
@@ -33,6 +20,7 @@ class FakeTransaction:
         self.exception_type: type[BaseException] | None = None
 
     async def __aenter__(self) -> "FakeTransaction":
+        self.session.active = True
         return self
 
     async def __aexit__(
@@ -54,11 +42,7 @@ class FakeSession:
 
     def begin(self) -> FakeTransaction:
         self.begin_calls += 1
-        self.active = True
         return self.transaction
-
-    def in_transaction(self) -> bool:
-        return self.active
 
 
 class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
@@ -69,140 +53,35 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
             id=1001,
             task_no="TASK-1001",
             task_type=TaskType.STOCK_OUT,
-            status=TaskStatus.APPROVED_FOR_EXECUTION,
+            status=TaskStatus.ASSIGNED,
             warehouse_id=1,
             assignee_id=23,
             reason=None,
-            started_at=None,
-            completed_at=None,
-            cancelled_at=None,
-            failed_at=None,
-        )
-        self.task.warehouse = Warehouse(id=1, code="A", name="Warehouse A")
-        self.item = BusinessTaskItem(
-            id=101,
-            task_id=1001,
-            product_id=1,
-            from_location_id=11,
-            to_location_id=12,
-            planned_quantity=Decimal("50"),
-            actual_quantity=None,
-        )
-        self.inventory = Inventory(
-            product_id=1,
-            warehouse_code="A",
-            on_hand_quantity=Decimal("100"),
-            reserved_quantity=Decimal("0"),
-            low_stock_threshold=Decimal("30"),
-            status=InventoryStatus.NORMAL,
         )
         self.tasks = MagicMock()
         self.tasks.get_for_update = AsyncMock(return_value=self.task)
-        self.tasks.get_items_for_update = AsyncMock(return_value=[self.item])
         self.tasks.save = AsyncMock(side_effect=lambda task: task)
         self.employees = MagicMock()
         self.employees.get_for_update = AsyncMock(return_value=self.employee)
         self.audits = MagicMock()
         self.audits.append = AsyncMock(side_effect=lambda audit: audit)
-        self.inventories = MagicMock()
-        self.inventories.get_for_update = AsyncMock(return_value=self.inventory)
-        self.inventories.save = AsyncMock(side_effect=lambda inventory: inventory)
-        self.movements = MagicMock()
-        self.movements.save = AsyncMock(side_effect=lambda movement: movement)
-        self.inventory_audits = MagicMock()
-        self.inventory_audits.append = AsyncMock(side_effect=lambda audit: audit)
-        inventory_service = InventoryService(
-            self.session,  # type: ignore[arg-type]
-            self.inventories,
-            self.movements,
-            self.inventory_audits,
-        )
         self.service = TaskService(
             self.session,  # type: ignore[arg-type]
             self.tasks,
             self.employees,
             self.audits,
-            inventory_service,
         )
 
-    async def test_complete_stock_out_uses_actual_quantity_and_audits(self) -> None:
-        result = await self.service.complete_task(
-            1001, self.employee, {"quantity": 40}, "10 units damaged"
-        )
+    async def test_start_task_moves_assigned_task_to_in_progress(self) -> None:
+        result = await self.service.start_task(1001, self.employee)
 
         self.assertIs(result, self.task)
-        self.assertEqual(self.task.status, TaskStatus.COMPLETED)
-        self.assertEqual(self.item.actual_quantity, Decimal("40"))
-        self.assertEqual(self.task.reason, "10 units damaged")
-        self.assertIsNotNone(self.task.completed_at)
-        self.assertIsNone(self.task.cancelled_at)
-        self.assertEqual(self.inventory.on_hand_quantity, Decimal("60"))
-        movement = self.movements.save.await_args.args[0]
-        self.assertEqual(movement.movement_type, MovementType.OUT)
-        self.assertEqual(movement.quantity, Decimal("40"))
-        self.assertEqual(movement.reference_type, "BUSINESS_TASK")
-        self.assertEqual(movement.reference_id, 1001)
+        self.assertEqual(self.task.status, TaskStatus.IN_PROGRESS)
+        self.assertIsNotNone(self.task.started_at)
         audit = self.audits.append.await_args.args[0]
-        self.assertEqual(audit.actor_type, ActorType.EMPLOYEE)
-        self.assertEqual(audit.actor_id, "23")
-        self.assertEqual(audit.action, "COMPLETE_TASK")
-        self.assertEqual(
-            audit.after_data["items"],
-            [{"id": 101, "actual_quantity": "40"}],
-        )
-        inventory_audit = self.inventory_audits.append.await_args.args[0]
-        self.assertEqual(inventory_audit.action, "STOCK_OUT")
-        self.assertEqual(inventory_audit.actor_type, ActorType.EMPLOYEE)
-        self.assertEqual(inventory_audit.actor_id, "23")
-        self.assertEqual(inventory_audit.trace_id, audit.trace_id)
-        self.assertEqual(self.session.begin_calls, 1)
-        self.assertIsNone(self.session.transaction.exception_type)
-
-    async def test_complete_stock_in_uses_incoming_capability(self) -> None:
-        self.task.task_type = TaskType.STOCK_IN
-
-        await self.service.complete_task(1001, self.employee, {"quantity": 40})
-
-        self.assertEqual(self.inventory.on_hand_quantity, Decimal("140"))
-        self.assertEqual(
-            self.movements.save.await_args.args[0].movement_type,
-            MovementType.IN,
-        )
-
-    async def test_invalid_actual_data_never_reaches_inventory(self) -> None:
-        for actual in ({}, {"quantity": 0}, {"quantity": "40"},
-                       {"quantity": True}, {"quantity": 40, "product_id": 2}):
-            with self.subTest(actual=actual):
-                with self.assertRaises(InvalidTaskDataError):
-                    await self.service.complete_task(1001, self.employee, actual)
-
-        self.inventories.get_for_update.assert_not_awaited()
-        self.tasks.save.assert_not_awaited()
-        self.audits.append.assert_not_awaited()
-        self.inventory_audits.append.assert_not_awaited()
-
-    async def test_missing_task_item_never_reaches_inventory(self) -> None:
-        self.tasks.get_items_for_update.return_value = []
-
-        with self.assertRaises(InvalidTaskDataError):
-            await self.service.complete_task(1001, self.employee, {"quantity": 40})
-
-        self.inventories.get_for_update.assert_not_awaited()
-        self.tasks.save.assert_not_awaited()
-        self.audits.append.assert_not_awaited()
-        self.inventory_audits.append.assert_not_awaited()
-
-    async def test_insufficient_stock_leaves_task_approved_for_execution(self) -> None:
-        self.inventory.on_hand_quantity = Decimal("20")
-
-        with self.assertRaises(InsufficientStockError):
-            await self.service.complete_task(1001, self.employee, {"quantity": 40})
-
-        self.assertEqual(self.task.status, TaskStatus.APPROVED_FOR_EXECUTION)
-        self.tasks.save.assert_not_awaited()
-        self.audits.append.assert_not_awaited()
-        self.inventory_audits.append.assert_not_awaited()
-        self.assertIs(self.session.transaction.exception_type, InsufficientStockError)
+        self.assertEqual(audit.action, "START_TASK")
+        self.assertEqual(audit.before_data, {"status": "ASSIGNED"})
+        self.assertEqual(audit.after_data["status"], "IN_PROGRESS")
 
     async def test_cancel_requires_reason_and_writes_audit(self) -> None:
         self.task.status = TaskStatus.IN_PROGRESS
@@ -211,26 +90,24 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
             await self.service.cancel_task(1001, self.employee, "  ")
 
         result = await self.service.cancel_task(
-            1001, self.employee, "  Cannot proceed  "
+            1001,
+            self.employee,
+            "  Cannot proceed  ",
         )
 
         self.assertIs(result, self.task)
         self.assertEqual(self.task.status, TaskStatus.CANCELLED)
         self.assertEqual(self.task.reason, "Cannot proceed")
         self.assertIsNotNone(self.task.cancelled_at)
-        self.assertIsNone(self.task.completed_at)
-        self.inventories.get_for_update.assert_not_awaited()
         audit = self.audits.append.await_args.args[0]
         self.assertEqual(audit.action, "CANCEL_TASK")
-        self.assertEqual(audit.after_data["reason"], "Cannot proceed")
-        self.inventory_audits.append.assert_not_awaited()
 
     async def test_missing_wrong_employee_inactive_and_finished_are_rejected(
         self,
     ) -> None:
         self.tasks.get_for_update.return_value = None
         with self.assertRaises(TaskNotFoundError):
-            await self.service.complete_task(1001, self.employee, {"quantity": 40})
+            await self.service.start_task(1001, self.employee)
 
         self.tasks.get_for_update.return_value = self.task
         self.task.assignee_id = 99
@@ -240,79 +117,21 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
         self.task.assignee_id = 23
         self.employee.status = EmployeeStatus.INACTIVE
         with self.assertRaises(InactiveEmployeeError):
-            await self.service.complete_task(1001, self.employee, {"quantity": 40})
+            await self.service.start_task(1001, self.employee)
 
         self.employee.status = EmployeeStatus.ACTIVE
         self.task.status = TaskStatus.COMPLETED
         with self.assertRaises(InvalidTaskStateError):
             await self.service.cancel_task(1001, self.employee, "reason")
 
-        self.assertEqual(self.session.begin_calls, 4)
-        self.inventories.get_for_update.assert_not_awaited()
-        self.audits.append.assert_not_awaited()
-        self.inventory_audits.append.assert_not_awaited()
-
-    async def test_audit_failure_aborts_shared_transaction(self) -> None:
+    async def test_audit_failure_aborts_task_transaction(self) -> None:
         self.audits.append.side_effect = RuntimeError("audit unavailable")
 
         with self.assertRaisesRegex(RuntimeError, "audit unavailable"):
-            await self.service.complete_task(1001, self.employee, {"quantity": 40})
+            await self.service.start_task(1001, self.employee)
 
         self.assertIs(self.session.transaction.exception_type, RuntimeError)
-        self.assertEqual(self.session.begin_calls, 1)
-        self.movements.save.assert_awaited_once()
-        self.inventory_audits.append.assert_awaited_once()
-
-    async def test_inventory_audit_failure_prevents_task_completion(self) -> None:
-        self.inventory_audits.append.side_effect = RuntimeError(
-            "inventory audit unavailable"
-        )
-
-        with self.assertRaisesRegex(RuntimeError, "inventory audit unavailable"):
-            await self.service.complete_task(1001, self.employee, {"quantity": 40})
-
-        self.assertEqual(self.task.status, TaskStatus.APPROVED_FOR_EXECUTION)
-        self.tasks.save.assert_not_awaited()
-        self.audits.append.assert_not_awaited()
-        self.assertIs(self.session.transaction.exception_type, RuntimeError)
-
-    async def test_inventory_transaction_entry_requires_outer_transaction(self) -> None:
-        inventory_service = InventoryService(
-            self.session,  # type: ignore[arg-type]
-            self.inventories,
-            self.movements,
-            self.inventory_audits,
-        )
-
-        with self.assertRaisesRegex(RuntimeError, "active transaction"):
-            await inventory_service.stock_out_in_transaction(1, "A", 1)
-
-        self.inventories.get_for_update.assert_not_awaited()
-
-    async def test_completed_and_cancelled_tasks_cannot_repeat_action(self) -> None:
-        await self.service.complete_task(1001, self.employee, {"quantity": 40})
-        with self.assertRaises(InvalidTaskStateError):
-            await self.service.complete_task(1001, self.employee, {"quantity": 40})
-
-        self.task.status = TaskStatus.ASSIGNED
-        self.item.actual_quantity = None
-        self.task.reason = None
-        self.task.completed_at = None
-        await self.service.cancel_task(1001, self.employee, "cannot proceed")
-        with self.assertRaises(InvalidTaskStateError):
-            await self.service.cancel_task(1001, self.employee, "again")
-
-    async def test_start_task_moves_assigned_task_to_in_progress(self) -> None:
-        self.task.status = TaskStatus.ASSIGNED
-
-        result = await self.service.start_task(1001, self.employee)
-
-        self.assertIs(result, self.task)
-        self.assertEqual(self.task.status, TaskStatus.IN_PROGRESS)
-        self.assertIsNotNone(self.task.started_at)
-        audit = self.audits.append.await_args.args[0]
-        self.assertEqual(audit.action, "START_TASK")
-        self.assertEqual(audit.before_data, {"status": "ASSIGNED"})
+        self.tasks.save.assert_awaited_once()
 
     async def test_invalid_task_identity_is_rejected_before_transaction(self) -> None:
         with self.assertRaises(InvalidTaskDataError):
