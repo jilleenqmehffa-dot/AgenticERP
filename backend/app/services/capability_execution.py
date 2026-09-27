@@ -28,11 +28,17 @@ from app.models.task_execution import TaskExecution
 from app.repositories.audit_log import AuditLogRepository
 from app.repositories.business_task import BusinessTaskRepository
 from app.repositories.employee import EmployeeRepository
+from app.repositories.outbound_order import OutboundOrderRepository
+from app.repositories.stock_reservation import StockReservationRepository
 from app.repositories.task_execution import TaskExecutionRepository
 from app.repositories.task_submission import TaskSubmissionRepository
-from app.services.inventory import InventoryService
+from app.services.inventory_balance import InventoryBalanceService
+from app.services.inventory_bucket import InventoryBucketService
+from app.services.inventory_movement import InventoryMovementService
 from app.services.packing import PackingService
+from app.services.picking import PickingService
 from app.services.receiving import ReceivingService
+from app.services.reservation import ReservationService
 from app.services.task_submission import TaskSubmissionService
 
 
@@ -45,9 +51,15 @@ class CapabilityExecutionService:
         submission_repository: TaskSubmissionRepository | None = None,
         employee_repository: EmployeeRepository | None = None,
         audit_repository: AuditLogRepository | None = None,
-        inventory_service: InventoryService | None = None,
+        inventory_movement_service: InventoryMovementService | None = None,
         packing_service: PackingService | None = None,
         receiving_service: ReceivingService | None = None,
+        bucket_service: InventoryBucketService | None = None,
+        picking_service: PickingService | None = None,
+        reservation_service: ReservationService | None = None,
+        reservation_repository: StockReservationRepository | None = None,
+        outbound_repository: OutboundOrderRepository | None = None,
+        balance_service: InventoryBalanceService | None = None,
     ) -> None:
         self._session = session
         self._executions = execution_repository or TaskExecutionRepository(session)
@@ -55,10 +67,36 @@ class CapabilityExecutionService:
         self._submissions = submission_repository or TaskSubmissionRepository(session)
         self._employees = employee_repository or EmployeeRepository(session)
         self._audits = audit_repository or AuditLogRepository(session)
+        balances = balance_service or InventoryBalanceService(session)
+        inventory_movements = inventory_movement_service or InventoryMovementService(
+            session,
+            balance_service=balances,
+        )
+        buckets = bucket_service or InventoryBucketService(session)
+        reservations = reservation_repository or StockReservationRepository(session)
+        outbound = outbound_repository or OutboundOrderRepository(session)
+        reservation = reservation_service or ReservationService(
+            session,
+            reservation_repository=reservations,
+            outbound_repository=outbound,
+            bucket_service=buckets,
+            balance_service=balances,
+        )
         self._dispatcher = CapabilityDispatcher(
-            inventory_service or InventoryService(session),
-            packing_service or PackingService(session),
+            inventory_movements,
+            packing_service or PackingService(session, outbound_repository=outbound),
             receiving_service or ReceivingService(session),
+            buckets,
+            picking_service
+            or PickingService(
+                session,
+                reservation_repository=reservations,
+                outbound_repository=outbound,
+                bucket_service=buckets,
+            ),
+            reservation,
+            reservations,
+            outbound,
         )
 
     async def execute(self, *, execution_id: int) -> TaskExecution:
@@ -144,11 +182,7 @@ class CapabilityExecutionService:
                     {}
                     if task.task_type == TaskType.PACK
                     else (
-                        {
-                            key: value
-                            for key, value in form.items()
-                            if key != "remark"
-                        }
+                        form
                         if task.task_type == TaskType.RECEIVE
                         else {"quantity": form["actual_quantity"]}
                     )

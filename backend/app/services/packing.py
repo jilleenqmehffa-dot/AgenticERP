@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import ActorType
+from app.core.enums import ActorType, OutboundStatus
 from app.core.exceptions import (
     InvalidPackingDataError,
     OutboundOrderItemNotFoundError,
@@ -70,14 +70,41 @@ class PackingService:
         actor_id: str,
         trace_id: str,
     ) -> OutboundOrderItem:
-        item = await self._outbound.get_item_for_update(outbound_order_item_id)
+        item_reference = await self._outbound.get_item(outbound_order_item_id)
+        if item_reference is None:
+            raise OutboundOrderItemNotFoundError(outbound_order_item_id)
+        order = await self._outbound.get_for_update(item_reference.outbound_order_id)
+        if order is None:
+            raise InvalidPackingDataError("outbound order does not exist")
+        if order.status not in {
+            OutboundStatus.PICKING,
+            OutboundStatus.READY_TO_SHIP,
+        }:
+            raise InvalidPackingDataError("outbound order is not being packed")
+        items = await self._outbound.get_items_for_update(order.id)
+        item = next(
+            (candidate for candidate in items if candidate.id == outbound_order_item_id),
+            None,
+        )
         if item is None:
             raise OutboundOrderItemNotFoundError(outbound_order_item_id)
         if item.packed_at is not None:
             return item
+        if item.picked_quantity != item.reserved_quantity:
+            raise InvalidPackingDataError(
+                "outbound order item must be fully picked before packing"
+            )
 
         item.packed_at = datetime.now(timezone.utc)
         await self._outbound.save_item(item)
+        if all(
+            candidate.packed_at is not None
+            and candidate.picked_quantity == candidate.reserved_quantity
+            for candidate in items
+        ):
+            order.status = OutboundStatus.READY_TO_SHIP
+            order.ready_to_ship_at = datetime.now(timezone.utc)
+            await self._outbound.save_order(order)
         await self._audits.append(
             AuditLog(
                 actor_type=actor_type,

@@ -3,13 +3,15 @@ from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
 from app.capabilities.packing import PackingCapability
-from app.core.enums import ActorType, TaskType
+from app.core.enums import ActorType, OutboundStatus, TaskType
 from app.core.exceptions import (
+    InvalidPackingDataError,
     InvalidTaskDataError,
 )
 from app.models.business_task import BusinessTask
 from app.models.business_task_item import BusinessTaskItem
 from app.models.employee import Employee
+from app.models.outbound_order import OutboundOrder
 from app.models.outbound_order_item import OutboundOrderItem
 from app.services.packing import PackingService
 
@@ -59,8 +61,17 @@ class PackingServiceTests(unittest.IsolatedAsyncioTestCase):
             shipped_quantity=Decimal("0.000"),
         )
         self.outbound = MagicMock()
-        self.outbound.get_item_for_update = AsyncMock(return_value=self.item)
+        self.order = OutboundOrder(
+            id=201,
+            outbound_no="OUT-201",
+            warehouse_code="WH-A",
+            status=OutboundStatus.PICKING,
+        )
+        self.outbound.get_item = AsyncMock(return_value=self.item)
+        self.outbound.get_for_update = AsyncMock(return_value=self.order)
+        self.outbound.get_items_for_update = AsyncMock(return_value=[self.item])
         self.outbound.save_item = AsyncMock(side_effect=lambda item: item)
+        self.outbound.save_order = AsyncMock(side_effect=lambda order: order)
         self.audits = MagicMock()
         self.audits.append = AsyncMock(side_effect=lambda audit: audit)
         self.service = PackingService(
@@ -81,6 +92,9 @@ class PackingServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(self.item.packed_at)
         self.assertEqual(self.session.begin_calls, 1)
         self.outbound.save_item.assert_awaited_once_with(self.item)
+        self.outbound.save_order.assert_awaited_once_with(self.order)
+        self.assertEqual(self.order.status, OutboundStatus.READY_TO_SHIP)
+        self.assertIsNotNone(self.order.ready_to_ship_at)
         audit = self.audits.append.await_args.args[0]
         self.assertEqual(audit.action, "PACK_GOODS")
         self.assertFalse(audit.before_data["packed"])
@@ -93,7 +107,7 @@ class PackingServiceTests(unittest.IsolatedAsyncioTestCase):
                 101,
             )
 
-        self.outbound.get_item_for_update.assert_not_awaited()
+        self.outbound.get_item.assert_not_awaited()
 
     async def test_repeated_pack_is_idempotent(self) -> None:
         self.session.active = True
@@ -106,6 +120,19 @@ class PackingServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.item.packed_at, first_packed_at)
         self.outbound.save_item.assert_awaited_once()
         self.audits.append.assert_awaited_once()
+
+    async def test_pack_requires_the_item_to_be_fully_picked(self) -> None:
+        self.item.picked_quantity = Decimal("9.000")
+
+        with self.assertRaisesRegex(
+            InvalidPackingDataError,
+            "fully picked",
+        ):
+            await self.service.mark_packed(101)
+
+        self.assertIsNone(self.item.packed_at)
+        self.outbound.save_item.assert_not_awaited()
+        self.outbound.save_order.assert_not_awaited()
 
 
 class PackingCapabilityTests(unittest.IsolatedAsyncioTestCase):
