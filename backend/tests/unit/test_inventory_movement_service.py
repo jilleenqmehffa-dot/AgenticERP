@@ -12,14 +12,16 @@ from app.core.exceptions import (
     InventoryNotFoundError,
 )
 from app.models.inventory import Inventory
-from app.services.inventory import InventoryService
+from app.services.inventory_movement import InventoryMovementService
 
 
 class FakeTransaction:
-    def __init__(self) -> None:
+    def __init__(self, session: "FakeSession") -> None:
+        self._session = session
         self.exception_type: type[BaseException] | None = None
 
     async def __aenter__(self) -> "FakeTransaction":
+        self._session.active = True
         return self
 
     async def __aexit__(
@@ -29,17 +31,23 @@ class FakeTransaction:
         traceback: object,
     ) -> bool:
         self.exception_type = exception_type
+        self._session.active = False
         return False
 
 
 class FakeSession:
     def __init__(self) -> None:
-        self.transaction = FakeTransaction()
+        self.active = False
+        self.transaction = FakeTransaction(self)
         self.begin_calls = 0
 
     def begin(self) -> FakeTransaction:
         self.begin_calls += 1
+        self.transaction = FakeTransaction(self)
         return self.transaction
+
+    def in_transaction(self) -> bool:
+        return self.active
 
 
 def make_inventory(
@@ -58,7 +66,7 @@ def make_inventory(
     )
 
 
-class InventoryServiceTests(unittest.IsolatedAsyncioTestCase):
+class InventoryMovementServiceTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.session = FakeSession()
         self.inventories = MagicMock()
@@ -68,7 +76,7 @@ class InventoryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.movements.save = AsyncMock(side_effect=lambda movement: movement)
         self.audits = MagicMock()
         self.audits.append = AsyncMock(side_effect=lambda audit: audit)
-        self.service = InventoryService(
+        self.service = InventoryMovementService(
             self.session,  # type: ignore[arg-type]
             self.inventories,
             self.movements,

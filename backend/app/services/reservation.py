@@ -11,16 +11,13 @@ from app.core.enums import (
     StockStatus,
 )
 from app.core.exceptions import (
-    InsufficientStockError,
+    InsufficientReservedStockError,
     InvalidReservationDataError,
     InvalidReservationStateError,
-    InventoryNotFoundError,
     OutboundOrderItemNotFoundError,
     ReservationNotFoundError,
 )
-from app.domain.inventory import calculate_available, evaluate_inventory_status
 from app.models.audit_log import AuditLog
-from app.models.inventory import Inventory
 from app.models.outbound_order import OutboundOrder
 from app.models.outbound_order_item import OutboundOrderItem
 from app.models.stock_reservation import StockReservation
@@ -28,6 +25,7 @@ from app.repositories.audit_log import AuditLogRepository
 from app.repositories.inventory import InventoryRepository
 from app.repositories.outbound_order import OutboundOrderRepository
 from app.repositories.stock_reservation import StockReservationRepository
+from app.services.inventory_balance import InventoryBalanceService
 from app.services.inventory_bucket import InventoryBucketService
 
 
@@ -40,13 +38,17 @@ class ReservationService:
         inventory_repository: InventoryRepository | None = None,
         bucket_service: InventoryBucketService | None = None,
         audit_repository: AuditLogRepository | None = None,
+        balance_service: InventoryBalanceService | None = None,
     ) -> None:
         self._session = session
         self._reservations = reservation_repository or StockReservationRepository(
             session
         )
         self._outbound = outbound_repository or OutboundOrderRepository(session)
-        self._inventories = inventory_repository or InventoryRepository(session)
+        self._balances = balance_service or InventoryBalanceService(
+            session,
+            inventory_repository,
+        )
         self._buckets = bucket_service or InventoryBucketService(session)
         self._audits = audit_repository or AuditLogRepository(session)
 
@@ -116,16 +118,12 @@ class ReservationService:
                 raise InvalidReservationDataError(
                     "reservation quantity exceeds outbound item remainder"
                 )
-            inventory = await self._get_inventory(
+            balance_change = await self._balances.reserve_in_transaction(
                 item.product_id,
                 order.warehouse_code,
+                values["quantity"],
             )
-            available = calculate_available(
-                inventory.on_hand_quantity,
-                inventory.reserved_quantity,
-            )
-            if available < values["quantity"]:
-                raise InsufficientStockError(available, values["quantity"])
+            inventory = balance_change.inventory
 
             await self._buckets.move_in_transaction(
                 item.product_id,
@@ -142,10 +140,9 @@ class ReservationService:
                 trace_id=values["trace_id"],
             )
 
-            inventory_before = inventory.reserved_quantity
-            inventory.reserved_quantity += values["quantity"]
-            self._refresh_inventory_status(inventory)
-            await self._inventories.save(inventory)
+            inventory_before = Decimal(
+                balance_change.before_data["reserved_quantity"]
+            )
 
             item_before = item.reserved_quantity
             item.reserved_quantity += values["quantity"]
@@ -328,18 +325,24 @@ class ReservationService:
                 items,
                 reservation.outbound_order_item_id,
             )
-            inventory = await self._get_inventory(
-                reservation.product_id,
-                reservation.warehouse_code,
-            )
-            if inventory.reserved_quantity < reservation.quantity:
-                raise InvalidReservationDataError(
-                    "inventory reserved quantity is inconsistent"
-                )
             if item.reserved_quantity < reservation.quantity:
                 raise InvalidReservationDataError(
                     "outbound item reserved quantity is inconsistent"
                 )
+
+            try:
+                balance_change = (
+                    await self._balances.release_reserved_in_transaction(
+                        reservation.product_id,
+                        reservation.warehouse_code,
+                        reservation.quantity,
+                    )
+                )
+            except InsufficientReservedStockError:
+                raise InvalidReservationDataError(
+                    "inventory reserved quantity is inconsistent"
+                ) from None
+            inventory = balance_change.inventory
 
             await self._buckets.move_in_transaction(
                 reservation.product_id,
@@ -356,10 +359,9 @@ class ReservationService:
                 trace_id=trace_id,
             )
 
-            inventory_before = inventory.reserved_quantity
-            inventory.reserved_quantity -= reservation.quantity
-            self._refresh_inventory_status(inventory)
-            await self._inventories.save(inventory)
+            inventory_before = Decimal(
+                balance_change.before_data["reserved_quantity"]
+            )
 
             item_before = item.reserved_quantity
             item.reserved_quantity -= reservation.quantity
@@ -391,19 +393,6 @@ class ReservationService:
             )
             return reservation
 
-    async def _get_inventory(
-        self,
-        product_id: int,
-        warehouse_code: str,
-    ) -> Inventory:
-        inventory = await self._inventories.get_for_update(
-            product_id,
-            warehouse_code,
-        )
-        if inventory is None:
-            raise InventoryNotFoundError(product_id, warehouse_code)
-        return inventory
-
     @staticmethod
     def _find_item(
         items: list[OutboundOrderItem],
@@ -413,17 +402,6 @@ class ReservationService:
             if item.id == item_id:
                 return item
         raise OutboundOrderItemNotFoundError(item_id)
-
-    @staticmethod
-    def _refresh_inventory_status(inventory: Inventory) -> None:
-        available = calculate_available(
-            inventory.on_hand_quantity,
-            inventory.reserved_quantity,
-        )
-        inventory.status = evaluate_inventory_status(
-            available,
-            inventory.low_stock_threshold,
-        )
 
     @classmethod
     def _validate_reserve(cls, **values: object) -> dict[str, object]:

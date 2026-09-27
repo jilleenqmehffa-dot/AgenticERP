@@ -551,8 +551,8 @@ complete_stock_out()
 内部复用 V1：
 
 ``` text
-InventoryService.stock_in()
-InventoryService.stock_out()
+InventoryMovementService.stock_in()
+InventoryMovementService.stock_out()
 ```
 
 ## Capability Dispatcher
@@ -564,13 +564,13 @@ TaskType.STOCK_OUT
 ↓
 StockOutCapability
 ↓
-InventoryService.stock_out()
+InventoryMovementService.stock_out()
 
 TaskType.STOCK_IN
 ↓
 StockInCapability
 ↓
-InventoryService.stock_in()
+InventoryMovementService.stock_in()
 ```
 
 不能允许客户端提交任意函数名、模块名或 SQL。
@@ -588,9 +588,11 @@ Capability Dispatcher
 ↓
 StockOutCapability
 ↓
-InventoryService.stock_out(40)
+InventoryMovementService.stock_out(40)
 ↓
 库存校验
+↓
+InventoryBalanceService
 ↓
 Inventory -40
 ↓
@@ -689,7 +691,9 @@ Capability Dispatcher
 ↓
 StockOutCapability
 ↓
-InventoryService.stock_out(40)
+InventoryMovementService.stock_out(40)
+↓
+InventoryBalanceService
 ↓
 Inventory 100 → 60
 ↓
@@ -835,7 +839,7 @@ Capability Dispatcher
 StockInCapability
 StockOutCapability
 ↓
-接入 V1 InventoryService
+将 V1 InventoryService 拆分为 InventoryMovementService + InventoryBalanceService
 ```
 
 ------------------------------------------------------------------------
@@ -867,7 +871,9 @@ Capability Dispatcher
 ↓
 Business Capability
 ↓
-V1 InventoryService
+InventoryMovementService
+↓
+InventoryBalanceService
 ↓
 库存变化
 ↓
