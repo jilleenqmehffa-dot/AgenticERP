@@ -106,6 +106,21 @@ class InvalidPackingDataError(PackingError, ValueError):
     pass
 
 
+class PickingError(Exception):
+    """Base exception for controlled picking operations."""
+
+
+class InvalidPickingDataError(PickingError, ValueError):
+    pass
+
+
+class InvalidPickingStateError(PickingError):
+    def __init__(self, reservation_id: int) -> None:
+        super().__init__(
+            f"stock reservation state does not allow picking: {reservation_id}"
+        )
+
+
 class ReceivingError(Exception):
     """Base exception for controlled receiving operations."""
 
