@@ -4,7 +4,12 @@ from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import ActorType, ReceiptStatus
+from app.core.enums import (
+    ActorType,
+    ReceiptStatus,
+    StockStatus,
+    WarehouseLocationType,
+)
 from app.core.exceptions import (
     InboundReceiptItemNotFoundError,
     InvalidReceivingDataError,
@@ -12,8 +17,12 @@ from app.core.exceptions import (
 )
 from app.models.audit_log import AuditLog
 from app.models.inbound_receipt_item import InboundReceiptItem
+from app.models.receipt_inspection import ReceiptInspection
 from app.repositories.audit_log import AuditLogRepository
 from app.repositories.inbound_receipt import InboundReceiptRepository
+from app.repositories.receipt_inspection import ReceiptInspectionRepository
+from app.repositories.warehouse_location import WarehouseLocationRepository
+from app.services.inventory_bucket import InventoryBucketService
 
 
 class ReceivingService:
@@ -22,10 +31,16 @@ class ReceivingService:
         session: AsyncSession,
         receipt_repository: InboundReceiptRepository | None = None,
         audit_repository: AuditLogRepository | None = None,
+        bucket_service: InventoryBucketService | None = None,
+        inspection_repository: ReceiptInspectionRepository | None = None,
+        location_repository: WarehouseLocationRepository | None = None,
     ) -> None:
         self._session = session
         self._receipts = receipt_repository or InboundReceiptRepository(session)
         self._audits = audit_repository or AuditLogRepository(session)
+        self._buckets = bucket_service or InventoryBucketService(session)
+        self._inspections = inspection_repository or ReceiptInspectionRepository(session)
+        self._locations = location_repository or WarehouseLocationRepository(session)
 
     async def receive_and_inspect(
         self,
@@ -37,6 +52,13 @@ class ReceivingService:
         quarantined_quantity: Decimal | int = 0,
         rejected_quantity: Decimal | int = 0,
         expected_product_id: int,
+        business_task_id: int,
+        warehouse_id: int,
+        warehouse_code: str,
+        receiving_location_id: int,
+        assignee_id: int,
+        lot_no: str = "",
+        inspection_note: str | None = None,
         actor_type: ActorType = ActorType.SYSTEM,
         actor_id: str | None = None,
         trace_id: str | None = None,
@@ -49,6 +71,13 @@ class ReceivingService:
             quarantined_quantity=quarantined_quantity,
             rejected_quantity=rejected_quantity,
             expected_product_id=expected_product_id,
+            business_task_id=business_task_id,
+            warehouse_id=warehouse_id,
+            warehouse_code=warehouse_code,
+            receiving_location_id=receiving_location_id,
+            assignee_id=assignee_id,
+            lot_no=lot_no,
+            inspection_note=inspection_note,
             actor_type=actor_type,
             actor_id=actor_id,
             trace_id=trace_id,
@@ -66,6 +95,13 @@ class ReceivingService:
         quarantined_quantity: Decimal | int = 0,
         rejected_quantity: Decimal | int = 0,
         expected_product_id: int,
+        business_task_id: int,
+        warehouse_id: int,
+        warehouse_code: str,
+        receiving_location_id: int,
+        assignee_id: int,
+        lot_no: str = "",
+        inspection_note: str | None = None,
         actor_type: ActorType = ActorType.SYSTEM,
         actor_id: str | None = None,
         trace_id: str | None = None,
@@ -82,6 +118,13 @@ class ReceivingService:
             quarantined_quantity=quarantined_quantity,
             rejected_quantity=rejected_quantity,
             expected_product_id=expected_product_id,
+            business_task_id=business_task_id,
+            warehouse_id=warehouse_id,
+            warehouse_code=warehouse_code,
+            receiving_location_id=receiving_location_id,
+            assignee_id=assignee_id,
+            lot_no=lot_no,
+            inspection_note=inspection_note,
             actor_type=actor_type,
             actor_id=actor_id,
             trace_id=trace_id,
@@ -98,6 +141,13 @@ class ReceivingService:
         quarantined_quantity: Decimal,
         rejected_quantity: Decimal,
         expected_product_id: int,
+        business_task_id: int,
+        warehouse_id: int,
+        warehouse_code: str,
+        receiving_location_id: int,
+        assignee_id: int,
+        lot_no: str,
+        inspection_note: str | None,
         actor_type: ActorType,
         actor_id: str,
         trace_id: str,
@@ -110,6 +160,10 @@ class ReceivingService:
         )
         if receipt is None:
             raise InvalidReceivingDataError("inbound receipt does not exist")
+        if receipt.warehouse_code != warehouse_code:
+            raise InvalidReceivingDataError(
+                "receiving task warehouse does not match inbound receipt"
+            )
         if receipt.status not in {
             ReceiptStatus.PENDING_RECEIPT,
             ReceiptStatus.RECEIVING,
@@ -127,6 +181,19 @@ class ReceivingService:
                 "received quantity exceeds inbound receipt item remainder"
             )
 
+        receiving_location = await self._locations.get_for_update(
+            receiving_location_id
+        )
+        if (
+            receiving_location is None
+            or receiving_location.warehouse_id != warehouse_id
+            or receiving_location.location_type != WarehouseLocationType.RECEIVING
+            or not receiving_location.is_active
+        ):
+            raise InvalidReceivingDataError(
+                "receiving location must be an active RECEIVING location in the task warehouse"
+            )
+
         before = self._snapshot(item)
         item.received_quantity += received_quantity
         item.accepted_quantity += accepted_quantity
@@ -134,6 +201,35 @@ class ReceivingService:
         item.quarantined_quantity += quarantined_quantity
         item.rejected_quantity += rejected_quantity
         await self._receipts.save_item(item)
+
+        await self._inspections.save(
+            ReceiptInspection(
+                inbound_receipt_item_id=item.id,
+                business_task_id=business_task_id,
+                lot_no=lot_no,
+                received_quantity=received_quantity,
+                accepted_quantity=accepted_quantity,
+                defective_quantity=defective_quantity,
+                quarantined_quantity=quarantined_quantity,
+                rejected_quantity=rejected_quantity,
+                inspection_note=inspection_note,
+                inspected_by_id=assignee_id,
+            )
+        )
+        await self._record_disposition_buckets(
+            product_id=item.product_id,
+            warehouse_code=warehouse_code,
+            receiving_location_code=receiving_location.code,
+            lot_no=lot_no,
+            dispositions=(
+                (accepted_quantity, StockStatus.PENDING_PUTAWAY),
+                (defective_quantity, StockStatus.DEFECTIVE),
+                (quarantined_quantity, StockStatus.QUARANTINED),
+            ),
+            actor_type=actor_type,
+            actor_id=actor_id,
+            trace_id=trace_id,
+        )
 
         now = datetime.now(timezone.utc)
         before_status = receipt.status
@@ -162,6 +258,33 @@ class ReceivingService:
             )
         )
         return item
+
+    async def _record_disposition_buckets(
+        self,
+        *,
+        product_id: int,
+        warehouse_code: str,
+        receiving_location_code: str,
+        lot_no: str,
+        dispositions: tuple[tuple[Decimal, StockStatus], ...],
+        actor_type: ActorType,
+        actor_id: str,
+        trace_id: str,
+    ) -> None:
+        for quantity, stock_status in dispositions:
+            if quantity == 0:
+                continue
+            await self._buckets.increase_in_transaction(
+                product_id,
+                warehouse_code,
+                quantity,
+                location_code=receiving_location_code,
+                lot_no=lot_no,
+                stock_status=stock_status,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                trace_id=trace_id,
+            )
 
     @staticmethod
     def _find_item(
@@ -230,10 +353,47 @@ class ReceivingService:
             "expected_product_id": cls._positive_id(
                 values["expected_product_id"], "expected_product_id"
             ),
+            "business_task_id": cls._positive_id(
+                values["business_task_id"], "business_task_id"
+            ),
+            "warehouse_id": cls._positive_id(values["warehouse_id"], "warehouse_id"),
+            "warehouse_code": cls._required_code(
+                values["warehouse_code"], "warehouse_code", 64
+            ),
+            "receiving_location_id": cls._positive_id(
+                values["receiving_location_id"], "receiving_location_id"
+            ),
+            "assignee_id": cls._positive_id(values["assignee_id"], "assignee_id"),
+            "lot_no": cls._optional_text(values["lot_no"], "lot_no", 100) or "",
+            "inspection_note": cls._optional_text(
+                values["inspection_note"], "inspection_note", 2000
+            ),
             "actor_type": actor_type,
             "actor_id": cls._actor_id(actor_type, values["actor_id"]),
             "trace_id": cls._trace_id(values["trace_id"]),
         }
+
+    @staticmethod
+    def _required_code(value: object, field_name: str, max_length: int) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise InvalidReceivingDataError(f"{field_name} is required")
+        normalized = value.strip()
+        if len(normalized) > max_length:
+            raise InvalidReceivingDataError(f"{field_name} is too long")
+        return normalized
+
+    @staticmethod
+    def _optional_text(
+        value: object, field_name: str, max_length: int
+    ) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise InvalidReceivingDataError(f"{field_name} must be a string")
+        normalized = value.strip()
+        if len(normalized) > max_length:
+            raise InvalidReceivingDataError(f"{field_name} is too long")
+        return normalized or None
 
     @staticmethod
     def _positive_id(value: object, field_name: str) -> int:

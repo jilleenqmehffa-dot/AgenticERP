@@ -24,6 +24,8 @@ class _ReceivingActual(BaseModel):
     defective_quantity: Decimal = Field(ge=0, max_digits=18, decimal_places=3)
     quarantined_quantity: Decimal = Field(ge=0, max_digits=18, decimal_places=3)
     rejected_quantity: Decimal = Field(ge=0, max_digits=18, decimal_places=3)
+    lot_no: str = Field(default="", max_length=100)
+    remark: str | None = Field(default=None, min_length=1, max_length=2000)
 
     @model_validator(mode="after")
     def validate_quality_total(self) -> "_ReceivingActual":
@@ -68,6 +70,10 @@ class ReceiveCapability:
         if len(items) != 1:
             raise InvalidTaskDataError("receiving task must contain exactly one item")
         item = items[0]
+        if item.to_location_id is None:
+            raise InvalidTaskDataError(
+                "receiving task requires a receiving to_location_id"
+            )
         if actual.received_quantity != item.planned_quantity:
             raise InvalidTaskDataError(
                 "received quantity must equal the task planned quantity"
@@ -93,6 +99,13 @@ class ReceiveCapability:
             quarantined_quantity=data.actual.quarantined_quantity,
             rejected_quantity=data.actual.rejected_quantity,
             expected_product_id=data.item.product_id,
+            business_task_id=task.id,
+            warehouse_id=task.warehouse_id,
+            warehouse_code=task.warehouse.code,
+            receiving_location_id=data.item.to_location_id,
+            assignee_id=employee.id,
+            lot_no=data.actual.lot_no,
+            inspection_note=data.actual.remark,
             actor_type=ActorType.EMPLOYEE,
             actor_id=str(employee.id),
             trace_id=trace_id,

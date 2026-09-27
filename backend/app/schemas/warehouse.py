@@ -1,5 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.enums import WarehouseLocationType
+
 
 class WarehouseCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -19,6 +21,8 @@ class WarehouseLocationCreate(BaseModel):
 
     warehouse_id: int = Field(gt=0)
     code: str = Field(min_length=1, max_length=64)
+    location_type: WarehouseLocationType = WarehouseLocationType.STORAGE
+    is_active: bool = True
 
 
 class WarehouseLocationRead(WarehouseLocationCreate):

@@ -27,6 +27,11 @@ class BusinessTaskRepository:
         result = await self._session.scalars(
             select(BusinessTaskItem)
             .where(BusinessTaskItem.task_id == task_id)
+            .options(
+                selectinload(BusinessTaskItem.source_bucket),
+                selectinload(BusinessTaskItem.from_location),
+                selectinload(BusinessTaskItem.to_location),
+            )
             .order_by(BusinessTaskItem.id)
             .with_for_update()
         )

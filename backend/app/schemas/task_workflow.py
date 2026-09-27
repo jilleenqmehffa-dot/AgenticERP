@@ -69,6 +69,13 @@ class PackTaskSubmissionForm(BaseModel):
     remark: str | None = Field(default=None, min_length=1, max_length=2000)
 
 
+class PutawayTaskSubmissionForm(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actual_quantity: Decimal = Field(gt=0, max_digits=18, decimal_places=3)
+    remark: str | None = Field(default=None, min_length=1, max_length=2000)
+
+
 class ReceiveTaskSubmissionForm(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -81,6 +88,7 @@ class ReceiveTaskSubmissionForm(BaseModel):
     rejected_quantity: Decimal = Field(
         default=Decimal("0"), ge=0, max_digits=18, decimal_places=3
     )
+    lot_no: str = Field(default="", max_length=100)
     remark: str | None = Field(default=None, min_length=1, max_length=2000)
 
     @model_validator(mode="after")

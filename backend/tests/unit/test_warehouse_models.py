@@ -13,6 +13,7 @@ from app.core.enums import (
     StockStatus,
     TaskStatus,
     TransferStatus,
+    WarehouseLocationType,
 )
 from app.models.inbound_receipt import InboundReceipt
 from app.models.inbound_receipt_item import InboundReceiptItem
@@ -21,12 +22,14 @@ from app.models.outbound_order import OutboundOrder
 from app.models.outbound_order_item import OutboundOrderItem
 from app.models.purchase_order import PurchaseOrder
 from app.models.purchase_order_item import PurchaseOrderItem
+from app.models.receipt_inspection import ReceiptInspection
 from app.models.return_order import ReturnOrder
 from app.models.return_order_item import ReturnOrderItem
 from app.models.sales_order_item import SalesOrderItem
 from app.models.stock_reservation import StockReservation
 from app.models.stock_transfer import StockTransfer
 from app.models.stock_transfer_item import StockTransferItem
+from app.models.warehouse_location import WarehouseLocation
 
 
 class WarehouseModelTests(unittest.TestCase):
@@ -60,13 +63,15 @@ class WarehouseModelTests(unittest.TestCase):
         self.assertIn(PurchaseOrderStatus.ORDERED, PurchaseOrderStatus)
         self.assertIn(PurchaseOrderStatus.IN_TRANSIT, PurchaseOrderStatus)
         self.assertIn(ReceiptStatus.PENDING_RECEIPT, ReceiptStatus)
-        self.assertIn(ReceiptStatus.PENDING_INSPECTION, ReceiptStatus)
+        self.assertNotIn("PENDING_INSPECTION", {status.value for status in ReceiptStatus})
+        self.assertNotIn("INSPECTING", {status.value for status in ReceiptStatus})
         self.assertIn(ReturnStatus.IN_TRANSIT, ReturnStatus)
         self.assertIn(ReturnStatus.PENDING_OUTBOUND, ReturnStatus)
         self.assertIn(TransferStatus.IN_TRANSIT, TransferStatus)
         self.assertIn(StockStatus.FROZEN, StockStatus)
         self.assertIn(StockStatus.QUARANTINED, StockStatus)
         self.assertIn(StockStatus.DEFECTIVE, StockStatus)
+        self.assertIn(StockStatus.PENDING_PUTAWAY, StockStatus)
 
     def test_all_warehouse_models_are_registered(self) -> None:
         expected_tables = {
@@ -82,6 +87,7 @@ class WarehouseModelTests(unittest.TestCase):
             StockTransfer: "stock_transfers",
             StockTransferItem: "stock_transfer_items",
             InventoryBucket: "inventory_buckets",
+            ReceiptInspection: "receipt_inspections",
         }
 
         for model, table_name in expected_tables.items():
@@ -141,6 +147,14 @@ class WarehouseModelTests(unittest.TestCase):
         self.assertIn("lot_no", columns)
         self.assertFalse(columns.location_code.nullable)
         self.assertFalse(columns.lot_no.nullable)
+
+    def test_locations_have_operational_type_and_activation(self) -> None:
+        columns = WarehouseLocation.__table__.columns
+
+        self.assertFalse(columns.location_type.nullable)
+        self.assertFalse(columns.is_active.nullable)
+        self.assertIn(WarehouseLocationType.RECEIVING, WarehouseLocationType)
+        self.assertIn(WarehouseLocationType.QUARANTINE, WarehouseLocationType)
 
 
 if __name__ == "__main__":

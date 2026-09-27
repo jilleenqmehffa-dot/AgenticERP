@@ -182,6 +182,30 @@ class TaskSubmissionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(submission.form_data["quarantined_quantity"], "0")
         self.assertEqual(submission.form_data["rejected_quantity"], "0")
 
+    async def test_putaway_submission_accepts_decimal_quantity(self) -> None:
+        self.task.task_type = TaskType.PUTAWAY
+
+        await self.service.submit(
+            task_id=1001,
+            submitted_by_user_id=23,
+            form_data={"actual_quantity": "38.500", "remark": "上架完成"},
+        )
+
+        submission = self.submissions.save.await_args.args[0]
+        self.assertEqual(submission.form_data["actual_quantity"], "38.500")
+
+    async def test_pick_submission_accepts_decimal_quantity(self) -> None:
+        self.task.task_type = TaskType.PICK
+
+        await self.service.submit(
+            task_id=1001,
+            submitted_by_user_id=23,
+            form_data={"actual_quantity": "10.500", "remark": "拣货完成"},
+        )
+
+        submission = self.submissions.save.await_args.args[0]
+        self.assertEqual(submission.form_data["actual_quantity"], "10.500")
+
     async def test_invalid_form_and_state_do_not_create_submission(self) -> None:
         with self.assertRaises(InvalidTaskDataError):
             await self.service.submit(

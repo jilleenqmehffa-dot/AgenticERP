@@ -32,6 +32,7 @@ from app.repositories.employee import EmployeeRepository
 from app.repositories.task_submission import TaskSubmissionRepository
 from app.schemas.task_workflow import (
     PackTaskSubmissionForm,
+    PutawayTaskSubmissionForm,
     ReceiveTaskSubmissionForm,
     StockTaskSubmissionForm,
 )
@@ -145,6 +146,19 @@ class TaskSubmissionService:
             raise InvalidTaskDataError("invalid receiving task submission") from None
         return form.model_dump(mode="json", exclude_none=True)
 
+    @staticmethod
+    def validate_movement_form(
+        form_data: object,
+        task_type: TaskType,
+    ) -> dict[str, Any]:
+        try:
+            form = PutawayTaskSubmissionForm.model_validate(form_data)
+        except ValidationError:
+            raise InvalidTaskDataError(
+                f"invalid {task_type.value.lower()} task submission"
+            ) from None
+        return form.model_dump(mode="json", exclude_none=True)
+
     @classmethod
     def validate_form(
         cls,
@@ -155,6 +169,8 @@ class TaskSubmissionService:
             return cls.validate_pack_form(form_data)
         if task_type == TaskType.RECEIVE:
             return cls.validate_receive_form(form_data)
+        if task_type in {TaskType.PUTAWAY, TaskType.PICK}:
+            return cls.validate_movement_form(form_data, task_type)
         return cls.validate_stock_form(form_data)
 
     @staticmethod

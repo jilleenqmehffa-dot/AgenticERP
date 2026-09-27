@@ -14,6 +14,7 @@ from app.models.outbound_order_item import OutboundOrderItem
 from app.models.product import Product
 from app.models.purchase_order import PurchaseOrder
 from app.models.purchase_order_item import PurchaseOrderItem
+from app.models.receipt_inspection import ReceiptInspection
 from app.models.return_order import ReturnOrder
 from app.models.return_order_item import ReturnOrderItem
 from app.models.role import Role
@@ -47,6 +48,7 @@ __all__ = [
     "OutboundOrderItem",
     "PurchaseOrder",
     "PurchaseOrderItem",
+    "ReceiptInspection",
     "Role",
     "SalesOrder",
     "SalesOrderItem",

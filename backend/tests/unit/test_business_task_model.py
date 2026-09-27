@@ -5,7 +5,7 @@ from decimal import Decimal
 from pydantic import ValidationError
 from sqlalchemy import Computed, Enum
 
-from app.core.enums import ActorType, TaskStatus, TaskType
+from app.core.enums import ActorType, StockStatus, TaskStatus, TaskType
 from app.models.business_task import BusinessTask
 from app.models.business_task_item import BusinessTaskItem
 from app.models.employee import Employee
@@ -205,6 +205,11 @@ class BusinessTaskModelTests(unittest.TestCase):
             next(iter(columns.to_location_id.foreign_keys)).target_fullname,
             "warehouse_locations.id",
         )
+        self.assertEqual(
+            next(iter(columns.source_bucket_id.foreign_keys)).target_fullname,
+            "inventory_buckets.id",
+        )
+        self.assertIsInstance(columns.target_stock_status.type, Enum)
 
     def test_inventory_count_item_has_dedicated_task_relationship(self) -> None:
         columns = InventoryCountItem.__table__.columns

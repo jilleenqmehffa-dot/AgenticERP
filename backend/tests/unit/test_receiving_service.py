@@ -3,13 +3,22 @@ from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
 from app.capabilities.receiving import ReceiveCapability
-from app.core.enums import ActorType, ReceiptStatus, TaskType
+from app.core.enums import (
+    ActorType,
+    ReceiptStatus,
+    StockStatus,
+    TaskType,
+    WarehouseLocationType,
+)
 from app.core.exceptions import InvalidReceivingDataError, InvalidTaskDataError
 from app.models.business_task import BusinessTask
 from app.models.business_task_item import BusinessTaskItem
 from app.models.employee import Employee
 from app.models.inbound_receipt import InboundReceipt
 from app.models.inbound_receipt_item import InboundReceiptItem
+from app.models.inventory_bucket import InventoryBucket
+from app.models.warehouse import Warehouse
+from app.models.warehouse_location import WarehouseLocation
 from app.services.receiving import ReceivingService
 
 
@@ -72,11 +81,62 @@ class ReceivingServiceTests(unittest.IsolatedAsyncioTestCase):
         self.receipts.save_item = AsyncMock(side_effect=lambda item: item)
         self.audits = MagicMock()
         self.audits.append = AsyncMock(side_effect=lambda audit: audit)
+        self.receiving_location = WarehouseLocation(
+            id=11,
+            warehouse_id=1,
+            code="RECEIVING-A",
+            location_type=WarehouseLocationType.RECEIVING,
+            is_active=True,
+        )
+        self.locations = MagicMock()
+        self.locations.get_for_update = AsyncMock(return_value=self.receiving_location)
+        self.buckets = MagicMock()
+
+        async def increase_bucket(
+            product_id: int,
+            warehouse_code: str,
+            quantity: Decimal,
+            **kwargs: object,
+        ) -> InventoryBucket:
+            status = kwargs["stock_status"]
+            return InventoryBucket(
+                id={
+                    StockStatus.PENDING_PUTAWAY: 401,
+                    StockStatus.DEFECTIVE: 402,
+                    StockStatus.QUARANTINED: 403,
+                }[status],
+                product_id=product_id,
+                warehouse_code=warehouse_code,
+                location_code="RECEIVING-A",
+                lot_no=str(kwargs["lot_no"]),
+                stock_status=status,
+                quantity=quantity,
+            )
+
+        self.buckets.increase_in_transaction = AsyncMock(side_effect=increase_bucket)
+        self.inspections = MagicMock()
+
+        async def save_inspection(inspection: object) -> object:
+            inspection.id = 501
+            return inspection
+
+        self.inspections.save = AsyncMock(side_effect=save_inspection)
         self.service = ReceivingService(
             self.session,  # type: ignore[arg-type]
             self.receipts,
             self.audits,
+            self.buckets,
+            self.inspections,
+            self.locations,
         )
+        self.workflow_kwargs = {
+            "business_task_id": 1001,
+            "warehouse_id": 1,
+            "warehouse_code": "WH-A",
+            "receiving_location_id": 11,
+            "assignee_id": 23,
+            "lot_no": "LOT-1",
+        }
 
     async def test_employee_quantities_are_saved_and_receipt_is_inspected(self) -> None:
         result = await self.service.receive_and_inspect(
@@ -85,6 +145,7 @@ class ReceivingServiceTests(unittest.IsolatedAsyncioTestCase):
             accepted_quantity=Decimal("95.000"),
             defective_quantity=Decimal("5.000"),
             expected_product_id=301,
+            **self.workflow_kwargs,
             actor_type=ActorType.EMPLOYEE,
             actor_id="23",
             trace_id="trace-receive",
@@ -100,6 +161,15 @@ class ReceivingServiceTests(unittest.IsolatedAsyncioTestCase):
         audit = self.audits.append.await_args.args[0]
         self.assertEqual(audit.action, "RECEIVE_AND_INSPECT_GOODS")
         self.assertEqual(audit.trace_id, "trace-receive")
+        self.assertEqual(self.inspections.save.await_count, 1)
+        self.assertEqual(self.buckets.increase_in_transaction.await_count, 2)
+        self.assertEqual(
+            {
+                call.kwargs["stock_status"]
+                for call in self.buckets.increase_in_transaction.await_args_list
+            },
+            {StockStatus.PENDING_PUTAWAY, StockStatus.DEFECTIVE},
+        )
 
     async def test_partial_receipt_remains_receiving(self) -> None:
         await self.service.receive_and_inspect(
@@ -108,6 +178,7 @@ class ReceivingServiceTests(unittest.IsolatedAsyncioTestCase):
             accepted_quantity=38,
             defective_quantity=2,
             expected_product_id=301,
+            **self.workflow_kwargs,
         )
 
         self.assertEqual(self.receipt.status, ReceiptStatus.RECEIVING)
@@ -122,6 +193,7 @@ class ReceivingServiceTests(unittest.IsolatedAsyncioTestCase):
                 accepted_quantity=90,
                 defective_quantity=5,
                 expected_product_id=301,
+                **self.workflow_kwargs,
             )
 
         self.item.received_quantity = Decimal("90.000")
@@ -132,6 +204,7 @@ class ReceivingServiceTests(unittest.IsolatedAsyncioTestCase):
                 accepted_quantity=20,
                 defective_quantity=0,
                 expected_product_id=301,
+                **self.workflow_kwargs,
             )
 
 
@@ -149,10 +222,12 @@ class ReceiveCapabilityTests(unittest.IsolatedAsyncioTestCase):
             source_type="INBOUND_RECEIPT_ITEM",
             source_id=101,
         )
+        self.task.warehouse = Warehouse(id=1, code="WH-A", name="Warehouse A")
         self.item = BusinessTaskItem(
             id=11,
             task_id=1,
             product_id=301,
+            to_location_id=11,
             planned_quantity=Decimal("100.000"),
         )
         self.employee = Employee(id=23)
@@ -183,6 +258,8 @@ class ReceiveCapabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call.kwargs["received_quantity"], Decimal("100.000"))
         self.assertEqual(call.kwargs["accepted_quantity"], Decimal("95.000"))
         self.assertEqual(call.kwargs["defective_quantity"], Decimal("5.000"))
+        self.assertEqual(call.kwargs["business_task_id"], 1)
+        self.assertEqual(call.kwargs["receiving_location_id"], 11)
         self.assertEqual(self.item.actual_quantity, Decimal("100.000"))
 
     async def test_validate_rejects_wrong_source_and_inconsistent_total(self) -> None:

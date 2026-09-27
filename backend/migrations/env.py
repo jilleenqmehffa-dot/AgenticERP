@@ -27,6 +27,7 @@ from app.models import (  # noqa: F401
     Product,
     PurchaseOrder,
     PurchaseOrderItem,
+    ReceiptInspection,
     ReturnOrder,
     ReturnOrderItem,
     Role,
