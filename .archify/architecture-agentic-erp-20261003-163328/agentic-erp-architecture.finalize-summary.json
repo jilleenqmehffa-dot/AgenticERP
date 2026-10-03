@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "command": "finalize",
+  "status": "skipped",
+  "type": "architecture",
+  "quality": "showcase",
+  "specification": {
+    "path": "/home/lcx20/projects/AgenticERP/.archify/architecture-agentic-erp-20261003-163328/candidate.json",
+    "sha256": "83c399fbd8256e64ddb1ba94adcb2e12e78e35e3f8a7795d0fda956c1c59f584",
+    "bytes": 7608
+  },
+  "artifact": {
+    "path": "/home/lcx20/projects/AgenticERP/.archify/architecture-agentic-erp-20261003-163328/agentic-erp-architecture.html",
+    "sha256": "16e41805b18e4f39da24feb71c062d5a05a832f127d05247965c87172c14d258",
+    "bytes": 766293
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "skipped"
+  },
+  "failedStage": "browser-check",
+  "diagnostics": [
+    {
+      "code": "viewer/chrome-unavailable",
+      "severity": "warning",
+      "message": "Chrome or Chromium is unavailable. Set ARCHIFY_CHROME to its executable path.",
+      "subject": {
+        "artifact": "/home/lcx20/projects/AgenticERP/.archify/architecture-agentic-erp-20261003-163328/agentic-erp-architecture.html"
+      },
+      "evidence": {
+        "executable": null
+      },
+      "supportedFixes": [
+        "set ARCHIFY_CHROME to a Chrome or Chromium executable and rerun browser-check"
+      ]
+    }
+  ],
+  "diagnosticSummary": {
+    "total": 1,
+    "shown": 1,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "/home/lcx20/projects/AgenticERP/.archify/architecture-agentic-erp-20261003-163328/agentic-erp-architecture.finalize.json",
+    "summaryReceipt": "/home/lcx20/projects/AgenticERP/.archify/architecture-agentic-erp-20261003-163328/agentic-erp-architecture.finalize-summary.json",
+    "browserCheckReceipt": "/home/lcx20/projects/AgenticERP/.archify/architecture-agentic-erp-20261003-163328/agentic-erp-architecture.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.0.1",
+    "availableVersion": "3.0.1",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-03T09:10:25.722Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 1107
+}

@@ -1,0 +1,224 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "AgenticERP 当前后端架构",
+    "locale": "zh-CN",
+    "output": ".archify/architecture-agentic-erp-20261003-163328/agentic-erp-architecture.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/jilleenqmehffa-dot/AgenticERP.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "fe0735552b1a1de41e331becf5b01247d357334f"
+    }
+  },
+  "components": [
+    {
+      "id": "operator",
+      "type": "external",
+      "label": "运维 / 开发者",
+      "sublabel": "HTTP 客户端",
+      "pos": [40, 90],
+      "size": [160, 66],
+      "sources": [
+        { "path": "README.md", "line": 3, "end_line": 17, "label": "启动与探针说明" }
+      ]
+    },
+    {
+      "id": "fastapi",
+      "type": "backend",
+      "label": "FastAPI 应用",
+      "sublabel": "/health · /ready",
+      "tag": "Uvicorn :8000",
+      "pos": [350, 88],
+      "size": [190, 72],
+      "sources": [
+        { "path": "backend/app/main.py", "line": 11, "end_line": 33, "label": "应用生命周期与路由" },
+        { "path": "README.md", "line": 7, "end_line": 17, "label": "本地运行入口" }
+      ]
+    },
+    {
+      "id": "serviceCaller",
+      "type": "external",
+      "label": "进程内调用方",
+      "sublabel": "当前由单元测试驱动",
+      "pos": [40, 350],
+      "size": [180, 70],
+      "sources": [
+        { "path": "backend/tests/unit/test_task_submission_review_services.py", "line": 75, "end_line": 111, "label": "提交服务调用" },
+        { "path": "backend/tests/unit/test_capability_execution_service.py", "line": 147, "end_line": 165, "label": "执行服务调用" }
+      ]
+    },
+    {
+      "id": "taskWorkflow",
+      "type": "backend",
+      "label": "任务工作流服务",
+      "sublabel": "提交 · 审核 · 执行 · 失败记录",
+      "tag": "事务控制",
+      "pos": [300, 346],
+      "size": [230, 78],
+      "sources": [
+        { "path": "backend/app/services/task_submission.py", "line": 41, "end_line": 123, "label": "提交与状态推进" },
+        { "path": "backend/app/services/task_review.py", "line": 34, "end_line": 134, "label": "审核与待执行记录" },
+        { "path": "backend/app/services/capability_execution.py", "line": 102, "end_line": 223, "label": "执行与失败处理" }
+      ]
+    },
+    {
+      "id": "dispatcher",
+      "type": "backend",
+      "label": "能力派发器",
+      "sublabel": "按 TaskType 校验并派发",
+      "pos": [660, 350],
+      "size": [200, 70],
+      "sources": [
+        { "path": "backend/app/capabilities/dispatcher.py", "line": 27, "end_line": 82, "label": "能力注册与派发" },
+        { "path": "backend/app/services/capability_execution.py", "line": 85, "end_line": 100, "label": "派发器装配" }
+      ]
+    },
+    {
+      "id": "warehouseOps",
+      "type": "backend",
+      "label": "仓储作业能力",
+      "sublabel": "收货 · 入出库 · 上架 · 拣货 · 打包",
+      "tag": "库存与订单",
+      "pos": [960, 346],
+      "size": [250, 78],
+      "sources": [
+        { "path": "backend/app/capabilities/dispatcher.py", "line": 48, "end_line": 64, "label": "已注册仓储能力" },
+        { "path": "backend/app/services/inventory_movement.py", "line": 17, "end_line": 68, "label": "库存移动事务" },
+        { "path": "backend/app/services/packing.py", "line": 17, "end_line": 43, "label": "打包事务" }
+      ]
+    },
+    {
+      "id": "persistence",
+      "type": "backend",
+      "label": "持久化适配层",
+      "sublabel": "Repositories · ORM Models · AsyncSession",
+      "tag": "SQLAlchemy",
+      "pos": [600, 600],
+      "size": [290, 82],
+      "sources": [
+        { "path": "backend/app/repositories/business_task.py", "line": 9, "end_line": 38, "label": "任务查询与行锁" },
+        { "path": "backend/app/repositories/inventory.py", "line": 7, "end_line": 46, "label": "库存查询与保存" },
+        { "path": "backend/app/db/session.py", "line": 12, "end_line": 22, "label": "异步会话工厂" }
+      ]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL 17",
+      "sublabel": "ERP 状态与审计数据",
+      "tag": ":5432",
+      "pos": [1060, 604],
+      "size": [200, 74],
+      "sources": [
+        { "path": "backend/compose.yaml", "line": 1, "end_line": 17, "label": "数据库容器" },
+        { "path": "backend/app/core/config.py", "line": 7, "end_line": 18, "label": "DATABASE_URL 配置" },
+        { "path": "backend/migrations/env.py", "line": 52, "end_line": 63, "label": "迁移元数据" }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "backend/app · Python 3.12",
+      "wraps": ["fastapi", "taskWorkflow", "dispatcher", "warehouseOps", "persistence"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "probeRequest",
+      "from": "operator",
+      "to": "fastapi",
+      "label": "HTTP GET /health · /ready",
+      "variant": "emphasis"
+    },
+    {
+      "id": "readinessQuery",
+      "from": "fastapi",
+      "to": "postgres",
+      "label": "/ready · SELECT 1",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "right",
+      "via": [[580, 124], [1340, 124], [1340, 641]]
+    },
+    {
+      "id": "invokeServices",
+      "from": "serviceCaller",
+      "to": "taskWorkflow",
+      "label": "进程内异步调用",
+      "variant": "emphasis"
+    },
+    {
+      "id": "dispatchApprovedTask",
+      "from": "taskWorkflow",
+      "to": "dispatcher",
+      "label": "已审核任务 · TaskType"
+    },
+    {
+      "id": "runWarehouseCapability",
+      "from": "dispatcher",
+      "to": "warehouseOps",
+      "label": "校验并执行能力"
+    },
+    {
+      "id": "persistWorkflow",
+      "from": "taskWorkflow",
+      "to": "persistence",
+      "label": "任务 · 提交 · 执行 · 审计",
+      "fromSide": "bottom",
+      "toSide": "left"
+    },
+    {
+      "id": "persistWarehouseState",
+      "from": "warehouseOps",
+      "to": "persistence",
+      "label": "库存 · 订单 · 移动 · 审计",
+      "fromSide": "bottom",
+      "toSide": "right"
+    },
+    {
+      "id": "sqlPersistence",
+      "from": "persistence",
+      "to": "postgres",
+      "label": "异步 SQL · 行锁 · flush",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "当前入口边界",
+      "items": [
+        "FastAPI 当前只注册 /health 与 /ready；业务服务尚未挂接 APIRouter",
+        "任务业务链目前由进程内调用方与单元测试直接实例化服务"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "核心控制链",
+      "items": [
+        "员工提交表单后进入待审核；经理批准后创建幂等的待执行记录",
+        "执行服务在事务中锁定状态，按 TaskType 派发仓储能力，并记录成功或失败审计"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "已声明但未接线",
+      "items": [
+        "Compose 提供 tasks profile 下的 Redis，依赖中包含 Celery 与 Redis 客户端",
+        "仓库当前未发现 Celery app、任务注册或 Redis 运行时调用，因此不画成活动链路"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "证据快照",
+      "items": [
+        "架构证据固定到提交 fe0735552b1a1de41e331becf5b01247d357334f",
+        "工作区存在 10 个修改或新增路径；未提交的 inventory_count 等内容未作为 HEAD 证据"
+      ]
+    }
+  ]
+}

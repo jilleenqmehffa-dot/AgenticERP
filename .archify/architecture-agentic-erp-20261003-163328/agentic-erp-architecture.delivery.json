@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "083a6e93-8824-475d-b153-648a8a6e5502",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "/home/lcx20/projects/AgenticERP/.archify/architecture-agentic-erp-20261003-163328/candidate.json",
+  "output": "/home/lcx20/projects/AgenticERP/.archify/architecture-agentic-erp-20261003-163328/agentic-erp-architecture.html",
+  "specification": {
+    "sha256": "83c399fbd8256e64ddb1ba94adcb2e12e78e35e3f8a7795d0fda956c1c59f584",
+    "bytes": 7608
+  },
+  "artifact": {
+    "sha256": "16e41805b18e4f39da24feb71c062d5a05a832f127d05247965c87172c14d258",
+    "bytes": 766293
+  }
+}
