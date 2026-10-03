@@ -31,6 +31,7 @@ from app.repositories.business_task import BusinessTaskRepository
 from app.repositories.employee import EmployeeRepository
 from app.repositories.task_submission import TaskSubmissionRepository
 from app.schemas.task_workflow import (
+    InventoryCountTaskSubmissionForm,
     PackTaskSubmissionForm,
     PutawayTaskSubmissionForm,
     ReceiveTaskSubmissionForm,
@@ -147,6 +148,16 @@ class TaskSubmissionService:
         return form.model_dump(mode="json", exclude_none=True)
 
     @staticmethod
+    def validate_inventory_count_form(form_data: object) -> dict[str, Any]:
+        try:
+            form = InventoryCountTaskSubmissionForm.model_validate(form_data)
+        except ValidationError:
+            raise InvalidTaskDataError(
+                "invalid inventory count task submission"
+            ) from None
+        return form.model_dump(mode="json", exclude_none=True)
+
+    @staticmethod
     def validate_movement_form(
         form_data: object,
         task_type: TaskType,
@@ -169,6 +180,8 @@ class TaskSubmissionService:
             return cls.validate_pack_form(form_data)
         if task_type == TaskType.RECEIVE:
             return cls.validate_receive_form(form_data)
+        if task_type == TaskType.INVENTORY_COUNT:
+            return cls.validate_inventory_count_form(form_data)
         if task_type in {TaskType.PUTAWAY, TaskType.PICK}:
             return cls.validate_movement_form(form_data, task_type)
         return cls.validate_stock_form(form_data)

@@ -23,6 +23,7 @@ from app.models.business_task import BusinessTask
 from app.models.business_task_item import BusinessTaskItem
 from app.models.employee import Employee
 from app.models.inventory_bucket import InventoryBucket
+from app.models.inventory_count_item import InventoryCountItem
 from app.models.outbound_order import OutboundOrder
 from app.models.outbound_order_item import OutboundOrderItem
 from app.models.stock_reservation import StockReservation
@@ -114,6 +115,7 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.tasks = MagicMock()
         self.tasks.get_for_update = AsyncMock(return_value=self.task)
         self.tasks.get_items_for_update = AsyncMock(return_value=[self.item])
+        self.tasks.get_inventory_count_items_for_update = AsyncMock(return_value=[])
         self.tasks.save = AsyncMock(side_effect=lambda task: task)
         self.submissions = MagicMock()
         self.submissions.get_for_update = AsyncMock(return_value=self.submission)
@@ -144,6 +146,8 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.outbound.get_items_for_update = AsyncMock()
         self.outbound.save_item = AsyncMock(side_effect=lambda item: item)
         self.outbound.save_order = AsyncMock(side_effect=lambda order: order)
+        self.inventory_count = MagicMock()
+        self.inventory_count.record_counts_in_transaction = AsyncMock()
         self.service = CapabilityExecutionService(
             self.session,  # type: ignore[arg-type]
             self.executions,
@@ -159,6 +163,7 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
             self.reservation_service,
             self.reservations,
             self.outbound,
+            inventory_count_service=self.inventory_count,
         )
 
     async def test_execute_runs_capability_and_marks_execution_succeeded(self) -> None:
@@ -364,6 +369,39 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.item.actual_quantity, Decimal("10.000"))
         self.inventory.stock_out_in_transaction.assert_not_awaited()
         self.inventory.ship_reserved_in_transaction.assert_not_awaited()
+
+    async def test_inventory_count_records_results_without_adjusting_stock(
+        self,
+    ) -> None:
+        count_item = InventoryCountItem(
+            id=601,
+            task_id=1001,
+            product_id=1,
+            location_id=11,
+            system_quantity=Decimal("40.000"),
+        )
+        self.task.task_type = TaskType.INVENTORY_COUNT
+        self.tasks.get_items_for_update.return_value = []
+        self.tasks.get_inventory_count_items_for_update.return_value = [count_item]
+        self.submission.form_data = {
+            "results": [
+                {
+                    "inventory_count_item_id": 601,
+                    "counted_quantity": "38.000",
+                }
+            ],
+            "remark": "盘亏两件",
+        }
+        self.execution.capability_name = TaskType.INVENTORY_COUNT.value
+
+        await self.service.execute(execution_id=701)
+
+        count_call = self.inventory_count.record_counts_in_transaction.await_args
+        self.assertEqual(count_call.args[0], [count_item])
+        self.assertEqual(count_call.args[1], {601: Decimal("38.000")})
+        self.assertEqual(self.task.status, TaskStatus.COMPLETED)
+        self.inventory.stock_in_in_transaction.assert_not_awaited()
+        self.inventory.stock_out_in_transaction.assert_not_awaited()
 
     async def test_succeeded_execution_is_idempotent(self) -> None:
         await self.service.execute(execution_id=701)

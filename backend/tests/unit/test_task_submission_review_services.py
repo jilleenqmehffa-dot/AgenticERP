@@ -206,6 +206,33 @@ class TaskSubmissionServiceTests(unittest.IsolatedAsyncioTestCase):
         submission = self.submissions.save.await_args.args[0]
         self.assertEqual(submission.form_data["actual_quantity"], "10.500")
 
+    async def test_inventory_count_submission_accepts_all_count_results(
+        self,
+    ) -> None:
+        self.task.task_type = TaskType.INVENTORY_COUNT
+
+        await self.service.submit(
+            task_id=1001,
+            submitted_by_user_id=23,
+            form_data={
+                "results": [
+                    {
+                        "inventory_count_item_id": 11,
+                        "counted_quantity": "9.500",
+                    },
+                    {
+                        "inventory_count_item_id": 12,
+                        "counted_quantity": "5.000",
+                    },
+                ],
+                "remark": "盘点完成",
+            },
+        )
+
+        submission = self.submissions.save.await_args.args[0]
+        self.assertEqual(submission.form_data["results"][0]["counted_quantity"], "9.500")
+        self.assertEqual(submission.form_data["results"][1]["inventory_count_item_id"], 12)
+
     async def test_invalid_form_and_state_do_not_create_submission(self) -> None:
         with self.assertRaises(InvalidTaskDataError):
             await self.service.submit(

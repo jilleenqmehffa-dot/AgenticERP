@@ -34,6 +34,7 @@ from app.repositories.task_execution import TaskExecutionRepository
 from app.repositories.task_submission import TaskSubmissionRepository
 from app.services.inventory_balance import InventoryBalanceService
 from app.services.inventory_bucket import InventoryBucketService
+from app.services.inventory_count import InventoryCountService
 from app.services.inventory_movement import InventoryMovementService
 from app.services.packing import PackingService
 from app.services.picking import PickingService
@@ -60,6 +61,7 @@ class CapabilityExecutionService:
         reservation_repository: StockReservationRepository | None = None,
         outbound_repository: OutboundOrderRepository | None = None,
         balance_service: InventoryBalanceService | None = None,
+        inventory_count_service: InventoryCountService | None = None,
     ) -> None:
         self._session = session
         self._executions = execution_repository or TaskExecutionRepository(session)
@@ -97,6 +99,12 @@ class CapabilityExecutionService:
             reservation,
             reservations,
             outbound,
+            inventory_count_service
+            or InventoryCountService(
+                session,
+                task_repository=self._tasks,
+                audit_repository=self._audits,
+            ),
         )
 
     async def execute(self, *, execution_id: int) -> TaskExecution:
@@ -178,12 +186,18 @@ class CapabilityExecutionService:
                 execution_started = True
 
                 items = await self._tasks.get_items_for_update(task.id)
+                inventory_count_items = (
+                    await self._tasks.get_inventory_count_items_for_update(task.id)
+                    if task.task_type == TaskType.INVENTORY_COUNT
+                    else []
+                )
                 actual_data = (
                     {}
                     if task.task_type == TaskType.PACK
                     else (
                         form
-                        if task.task_type == TaskType.RECEIVE
+                        if task.task_type
+                        in {TaskType.RECEIVE, TaskType.INVENTORY_COUNT}
                         else {"quantity": form["actual_quantity"]}
                     )
                 )
@@ -193,6 +207,7 @@ class CapabilityExecutionService:
                     items,
                     actual_data,
                     attempt_trace_id,
+                    inventory_count_items,
                 )
 
                 completed_at = datetime.now(timezone.utc)

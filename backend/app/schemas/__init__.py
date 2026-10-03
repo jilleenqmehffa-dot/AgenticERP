@@ -46,6 +46,8 @@ from app.schemas.warehouse import (
     WarehouseRead,
 )
 from app.schemas.task_workflow import (
+    InventoryCountResultForm,
+    InventoryCountTaskSubmissionForm,
     TaskExecutionRead,
     TaskRecommendationCreate,
     TaskRecommendationRead,
@@ -76,6 +78,8 @@ __all__ = [
     "InventoryUpdate",
     "InventoryCountItemCreate",
     "InventoryCountItemRead",
+    "InventoryCountResultForm",
+    "InventoryCountTaskSubmissionForm",
     "ProductCreate",
     "ProductRead",
     "ProductUpdate",

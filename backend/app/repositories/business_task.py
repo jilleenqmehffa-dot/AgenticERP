@@ -4,6 +4,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.business_task import BusinessTask
 from app.models.business_task_item import BusinessTaskItem
+from app.models.inventory_count_item import InventoryCountItem
 
 
 class BusinessTaskRepository:
@@ -36,3 +37,23 @@ class BusinessTaskRepository:
             .with_for_update()
         )
         return list(result)
+
+    async def get_inventory_count_items_for_update(
+        self,
+        task_id: int,
+    ) -> list[InventoryCountItem]:
+        result = await self._session.scalars(
+            select(InventoryCountItem)
+            .where(InventoryCountItem.task_id == task_id)
+            .order_by(InventoryCountItem.id)
+            .with_for_update()
+        )
+        return list(result)
+
+    async def save_inventory_count_item(
+        self,
+        item: InventoryCountItem,
+    ) -> InventoryCountItem:
+        self._session.add(item)
+        await self._session.flush()
+        return item

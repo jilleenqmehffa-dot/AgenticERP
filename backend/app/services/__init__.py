@@ -3,6 +3,7 @@ from app.services.capability_execution import CapabilityExecutionService
 from app.services.inventory import InventoryService
 from app.services.inventory_balance import InventoryBalanceService
 from app.services.inventory_bucket import InventoryBucketService
+from app.services.inventory_count import InventoryCountService
 from app.services.inventory_movement import InventoryMovementService
 from app.services.packing import PackingService
 from app.services.picking import PickingService
@@ -19,6 +20,7 @@ __all__ = [
     "InventoryService",
     "InventoryBalanceService",
     "InventoryBucketService",
+    "InventoryCountService",
     "InventoryMovementService",
     "PackingService",
     "PickingService",

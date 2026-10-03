@@ -76,6 +76,27 @@ class PutawayTaskSubmissionForm(BaseModel):
     remark: str | None = Field(default=None, min_length=1, max_length=2000)
 
 
+class InventoryCountResultForm(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    inventory_count_item_id: int = Field(gt=0)
+    counted_quantity: Decimal = Field(ge=0, max_digits=18, decimal_places=3)
+
+
+class InventoryCountTaskSubmissionForm(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    results: list[InventoryCountResultForm] = Field(min_length=1)
+    remark: str | None = Field(default=None, min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_unique_items(self) -> "InventoryCountTaskSubmissionForm":
+        item_ids = [result.inventory_count_item_id for result in self.results]
+        if len(item_ids) != len(set(item_ids)):
+            raise ValueError("inventory count item ids must be unique")
+        return self
+
+
 class ReceiveTaskSubmissionForm(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
