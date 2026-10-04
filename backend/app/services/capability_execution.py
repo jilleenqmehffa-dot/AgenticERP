@@ -41,6 +41,7 @@ from app.services.picking import PickingService
 from app.services.receiving import ReceivingService
 from app.services.reservation import ReservationService
 from app.services.task_submission import TaskSubmissionService
+from app.workflows.inbound import InboundWorkflow
 
 
 class CapabilityExecutionService:
@@ -62,6 +63,7 @@ class CapabilityExecutionService:
         outbound_repository: OutboundOrderRepository | None = None,
         balance_service: InventoryBalanceService | None = None,
         inventory_count_service: InventoryCountService | None = None,
+        inbound_workflow: InboundWorkflow | None = None,
     ) -> None:
         self._session = session
         self._executions = execution_repository or TaskExecutionRepository(session)
@@ -77,6 +79,11 @@ class CapabilityExecutionService:
         buckets = bucket_service or InventoryBucketService(session)
         reservations = reservation_repository or StockReservationRepository(session)
         outbound = outbound_repository or OutboundOrderRepository(session)
+        receiving = receiving_service or ReceivingService(session)
+        self._inbound_workflow = inbound_workflow or InboundWorkflow(
+            session,
+            audit_repository=self._audits,
+        )
         reservation = reservation_service or ReservationService(
             session,
             reservation_repository=reservations,
@@ -87,7 +94,7 @@ class CapabilityExecutionService:
         self._dispatcher = CapabilityDispatcher(
             inventory_movements,
             packing_service or PackingService(session, outbound_repository=outbound),
-            receiving_service or ReceivingService(session),
+            receiving,
             buckets,
             picking_service
             or PickingService(
@@ -201,7 +208,7 @@ class CapabilityExecutionService:
                         else {"quantity": form["actual_quantity"]}
                     )
                 )
-                await self._dispatcher.execute(
+                capability_result = await self._dispatcher.execute(
                     task,
                     executor,
                     items,
@@ -219,6 +226,11 @@ class CapabilityExecutionService:
                 task.completed_at = completed_at
                 await self._executions.save(execution)
                 await self._tasks.save(task)
+                await self._inbound_workflow.after_task_completed_in_transaction(
+                    task,
+                    capability_result,
+                    trace_id=attempt_trace_id,
+                )
                 await self._audits.append(
                     self._execution_audit(
                         execution,

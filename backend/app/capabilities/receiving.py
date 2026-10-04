@@ -13,7 +13,7 @@ from app.models.business_task_item import BusinessTaskItem
 from app.models.employee import Employee
 
 if TYPE_CHECKING:
-    from app.services.receiving import ReceivingService
+    from app.services.receiving import ReceivingResult, ReceivingService
 
 
 class _ReceivingActual(BaseModel):
@@ -90,8 +90,10 @@ class ReceiveCapability:
         employee: Employee,
         data: ValidatedReceivingTask,
         trace_id: str,
-    ) -> None:
-        await self._receiving.receive_and_inspect_in_transaction(
+    ) -> ReceivingResult:
+        if task.id is None or task.warehouse is None:
+            raise InvalidTaskDataError("receiving task must be persisted with warehouse")
+        result = await self._receiving.receive_and_inspect_in_transaction(
             data.inbound_receipt_item_id,
             received_quantity=data.actual.received_quantity,
             accepted_quantity=data.actual.accepted_quantity,
@@ -111,3 +113,4 @@ class ReceiveCapability:
             trace_id=trace_id,
         )
         data.item.actual_quantity = data.actual.received_quantity
+        return result

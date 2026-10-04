@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from uuid import uuid4
@@ -23,6 +24,26 @@ from app.repositories.inbound_receipt import InboundReceiptRepository
 from app.repositories.receipt_inspection import ReceiptInspectionRepository
 from app.repositories.warehouse_location import WarehouseLocationRepository
 from app.services.inventory_bucket import InventoryBucketService
+
+
+@dataclass(frozen=True)
+class ReceivingDisposition:
+    bucket_id: int
+    stock_status: StockStatus
+    quantity: Decimal
+
+
+@dataclass(frozen=True)
+class ReceivingResult:
+    receipt_id: int
+    receipt_item_id: int
+    inspection_id: int
+    warehouse_id: int
+    receiving_location_id: int
+    product_id: int
+    lot_no: str
+    rejected_quantity: Decimal
+    dispositions: tuple[ReceivingDisposition, ...]
 
 
 class ReceivingService:
@@ -62,7 +83,7 @@ class ReceivingService:
         actor_type: ActorType = ActorType.SYSTEM,
         actor_id: str | None = None,
         trace_id: str | None = None,
-    ) -> InboundReceiptItem:
+    ) -> ReceivingResult:
         values = self._validate(
             inbound_receipt_item_id=inbound_receipt_item_id,
             received_quantity=received_quantity,
@@ -105,7 +126,7 @@ class ReceivingService:
         actor_type: ActorType = ActorType.SYSTEM,
         actor_id: str | None = None,
         trace_id: str | None = None,
-    ) -> InboundReceiptItem:
+    ) -> ReceivingResult:
         if not self._session.in_transaction():
             raise RuntimeError(
                 "receive_and_inspect_in_transaction requires an active transaction"
@@ -151,7 +172,7 @@ class ReceivingService:
         actor_type: ActorType,
         actor_id: str,
         trace_id: str,
-    ) -> InboundReceiptItem:
+    ) -> ReceivingResult:
         item_reference = await self._receipts.get_item(inbound_receipt_item_id)
         if item_reference is None:
             raise InboundReceiptItemNotFoundError(inbound_receipt_item_id)
@@ -202,7 +223,7 @@ class ReceivingService:
         item.rejected_quantity += rejected_quantity
         await self._receipts.save_item(item)
 
-        await self._inspections.save(
+        inspection = await self._inspections.save(
             ReceiptInspection(
                 inbound_receipt_item_id=item.id,
                 business_task_id=business_task_id,
@@ -216,12 +237,12 @@ class ReceivingService:
                 inspected_by_id=assignee_id,
             )
         )
-        await self._record_disposition_buckets(
+        dispositions = await self._record_disposition_buckets(
             product_id=item.product_id,
             warehouse_code=warehouse_code,
             receiving_location_code=receiving_location.code,
             lot_no=lot_no,
-            dispositions=(
+            quantities=(
                 (accepted_quantity, StockStatus.PENDING_PUTAWAY),
                 (defective_quantity, StockStatus.DEFECTIVE),
                 (quarantined_quantity, StockStatus.QUARANTINED),
@@ -230,7 +251,6 @@ class ReceivingService:
             actor_id=actor_id,
             trace_id=trace_id,
         )
-
         now = datetime.now(timezone.utc)
         before_status = receipt.status
         receipt.status = ReceiptStatus.RECEIVING
@@ -240,6 +260,8 @@ class ReceivingService:
             receipt.inspected_at = now
         await self._receipts.save(receipt)
 
+        if inspection.id is None:
+            raise RuntimeError("saved receipt inspection has no id")
         await self._audits.append(
             AuditLog(
                 actor_type=actor_type,
@@ -254,10 +276,24 @@ class ReceivingService:
                     "inbound_receipt_id": receipt.id,
                     "receipt_status_before": before_status.value,
                     "receipt_status_after": receipt.status.value,
+                    "inspection_id": inspection.id,
+                    "disposition_bucket_ids": [
+                        entry.bucket_id for entry in dispositions
+                    ],
                 },
             )
         )
-        return item
+        return ReceivingResult(
+            receipt_id=receipt.id,
+            receipt_item_id=item.id,
+            inspection_id=inspection.id,
+            warehouse_id=warehouse_id,
+            receiving_location_id=receiving_location_id,
+            product_id=item.product_id,
+            lot_no=lot_no,
+            rejected_quantity=rejected_quantity,
+            dispositions=dispositions,
+        )
 
     async def _record_disposition_buckets(
         self,
@@ -266,15 +302,16 @@ class ReceivingService:
         warehouse_code: str,
         receiving_location_code: str,
         lot_no: str,
-        dispositions: tuple[tuple[Decimal, StockStatus], ...],
+        quantities: tuple[tuple[Decimal, StockStatus], ...],
         actor_type: ActorType,
         actor_id: str,
         trace_id: str,
-    ) -> None:
-        for quantity, stock_status in dispositions:
+    ) -> tuple[ReceivingDisposition, ...]:
+        dispositions: list[ReceivingDisposition] = []
+        for quantity, stock_status in quantities:
             if quantity == 0:
                 continue
-            await self._buckets.increase_in_transaction(
+            bucket = await self._buckets.increase_in_transaction(
                 product_id,
                 warehouse_code,
                 quantity,
@@ -285,6 +322,16 @@ class ReceivingService:
                 actor_id=actor_id,
                 trace_id=trace_id,
             )
+            if bucket.id is None:
+                raise RuntimeError("saved inventory bucket has no id")
+            dispositions.append(
+                ReceivingDisposition(
+                    bucket_id=bucket.id,
+                    stock_status=stock_status,
+                    quantity=quantity,
+                )
+            )
+        return tuple(dispositions)
 
     @staticmethod
     def _find_item(

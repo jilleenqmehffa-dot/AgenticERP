@@ -83,7 +83,7 @@ class CapabilityDispatcher:
         actual_data: dict[str, Any],
         trace_id: str,
         inventory_count_items: list[InventoryCountItem] | None = None,
-    ) -> None:
+    ) -> Any:
         capability = self._capabilities.get(task.task_type)
         if capability is None:
             raise UnsupportedTaskTypeError(task.task_type)
@@ -96,4 +96,4 @@ class CapabilityDispatcher:
         else:
             capability_items = items
         validated = capability.validate(task, capability_items, actual_data)
-        await capability.execute(task, employee, validated, trace_id)
+        return await capability.execute(task, employee, validated, trace_id)

@@ -6,6 +6,7 @@ from app.repositories.inventory_bucket import InventoryBucketRepository
 from app.repositories.inbound_receipt import InboundReceiptRepository
 from app.repositories.outbound_order import OutboundOrderRepository
 from app.repositories.receipt_inspection import ReceiptInspectionRepository
+from app.repositories.putaway_dispatch import PutawayDispatchRepository
 from app.repositories.stock_reservation import StockReservationRepository
 from app.repositories.stock_movement import StockMovementRepository
 from app.repositories.task_execution import TaskExecutionRepository
@@ -22,6 +23,7 @@ __all__ = [
     "InboundReceiptRepository",
     "OutboundOrderRepository",
     "ReceiptInspectionRepository",
+    "PutawayDispatchRepository",
     "StockMovementRepository",
     "StockReservationRepository",
     "TaskExecutionRepository",

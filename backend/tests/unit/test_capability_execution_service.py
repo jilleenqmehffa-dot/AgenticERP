@@ -32,6 +32,7 @@ from app.models.task_submission import TaskSubmission
 from app.models.warehouse import Warehouse
 from app.models.warehouse_location import WarehouseLocation
 from app.services.capability_execution import CapabilityExecutionService
+from app.services.receiving import ReceivingResult
 
 
 class FakeTransaction:
@@ -130,7 +131,20 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.packing = MagicMock()
         self.packing.mark_packed_in_transaction = AsyncMock()
         self.receiving = MagicMock()
-        self.receiving.receive_and_inspect_in_transaction = AsyncMock()
+        self.receiving_result = ReceivingResult(
+            receipt_id=201,
+            receipt_item_id=3001,
+            inspection_id=501,
+            warehouse_id=1,
+            receiving_location_id=11,
+            product_id=1,
+            lot_no="",
+            rejected_quantity=Decimal("0"),
+            dispositions=(),
+        )
+        self.receiving.receive_and_inspect_in_transaction = AsyncMock(
+            return_value=self.receiving_result
+        )
         self.buckets = MagicMock()
         self.buckets.move_in_transaction = AsyncMock()
         self.buckets.decrease_in_transaction = AsyncMock()
@@ -148,6 +162,8 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.outbound.save_order = AsyncMock(side_effect=lambda order: order)
         self.inventory_count = MagicMock()
         self.inventory_count.record_counts_in_transaction = AsyncMock()
+        self.inbound_workflow = MagicMock()
+        self.inbound_workflow.after_task_completed_in_transaction = AsyncMock()
         self.service = CapabilityExecutionService(
             self.session,  # type: ignore[arg-type]
             self.executions,
@@ -164,9 +180,18 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
             self.reservations,
             self.outbound,
             inventory_count_service=self.inventory_count,
+            inbound_workflow=self.inbound_workflow,
         )
 
     async def test_execute_runs_capability_and_marks_execution_succeeded(self) -> None:
+        transition_states: list[tuple[TaskStatus, ExecutionStatus]] = []
+
+        async def record_transition(*args: object, **kwargs: object) -> None:
+            transition_states.append((self.task.status, self.execution.status))
+
+        self.inbound_workflow.after_task_completed_in_transaction.side_effect = (
+            record_transition
+        )
         result = await self.service.execute(execution_id=701)
 
         self.assertIs(result, self.execution)
@@ -189,6 +214,10 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(completed.action, "COMPLETE_TASK_EXECUTION")
         self.assertEqual(started.trace_id, completed.trace_id)
         self.assertEqual(started.trace_id, inventory_call.kwargs["trace_id"])
+        self.assertEqual(
+            transition_states,
+            [(TaskStatus.COMPLETED, ExecutionStatus.SUCCEEDED)],
+        )
 
     async def test_reservation_stock_out_consumes_picking_stock(self) -> None:
         self.task.source_type = "STOCK_RESERVATION"
@@ -322,6 +351,11 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.item.actual_quantity, Decimal("40.000"))
         self.assertEqual(self.task.status, TaskStatus.COMPLETED)
         self.inventory.stock_in_in_transaction.assert_not_awaited()
+        transition = (
+            self.inbound_workflow.after_task_completed_in_transaction.await_args
+        )
+        self.assertEqual(transition.args, (self.task, self.receiving_result))
+        self.assertEqual(self.task.status, TaskStatus.COMPLETED)
 
     async def test_pick_moves_reserved_goods_without_shipping_inventory(self) -> None:
         self.task.task_type = TaskType.PICK
@@ -444,6 +478,26 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
         started = self.audits.append.await_args_list[0].args[0]
         failed = self.audits.append.await_args_list[-1].args[0]
         self.assertEqual(started.trace_id, failed.trace_id)
+
+    async def test_workflow_transition_failure_marks_execution_failed(self) -> None:
+        async def fail_transition(*args: object, **kwargs: object) -> None:
+            # FakeSession has no identity-map rollback; restore the persisted state
+            # that a real SQLAlchemy rollback reloads before failure recording.
+            self.execution.status = ExecutionStatus.PENDING
+            self.task.status = TaskStatus.APPROVED_FOR_EXECUTION
+            raise RuntimeError("workflow transition unavailable")
+
+        self.inbound_workflow.after_task_completed_in_transaction.side_effect = (
+            fail_transition
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "workflow transition unavailable"):
+            await self.service.execute(execution_id=701)
+
+        self.assertEqual(len(self.session.transactions), 2)
+        self.assertIs(self.session.transactions[0].exception_type, RuntimeError)
+        self.assertEqual(self.execution.status, ExecutionStatus.FAILED)
+        self.assertEqual(self.task.status, TaskStatus.EXECUTION_FAILED)
 
     async def test_unapproved_submission_cannot_execute(self) -> None:
         self.submission.status = SubmissionStatus.PENDING_REVIEW

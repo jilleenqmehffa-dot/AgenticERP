@@ -44,7 +44,6 @@ class FakeSession:
         self.begin_calls += 1
         return self.transaction
 
-
 class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.session = FakeSession()
@@ -60,6 +59,7 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.tasks = MagicMock()
         self.tasks.get_for_update = AsyncMock(return_value=self.task)
+
         self.tasks.save = AsyncMock(side_effect=lambda task: task)
         self.employees = MagicMock()
         self.employees.get_for_update = AsyncMock(return_value=self.employee)

@@ -61,6 +61,12 @@ class RecommendationStatus(StrEnum):
     EXPIRED = "EXPIRED"
 
 
+class DispatchRequestStatus(StrEnum):
+    PENDING = "PENDING"
+    PUBLISHED = "PUBLISHED"
+    CANCELLED = "CANCELLED"
+
+
 class SubmissionStatus(StrEnum):
     PENDING_REVIEW = "PENDING_REVIEW"
     APPROVED = "APPROVED"

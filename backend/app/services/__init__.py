@@ -1,5 +1,7 @@
 from app.services.account import AccountService, AuthenticatedSession, authenticate_account
 from app.services.capability_execution import CapabilityExecutionService
+from app.services.inbound_completion import InboundCompletionService
+from app.services.task_publishing import TaskPublishingService
 from app.services.inventory import InventoryService
 from app.services.inventory_balance import InventoryBalanceService
 from app.services.inventory_bucket import InventoryBucketService
@@ -16,6 +18,8 @@ from app.services.task_submission import TaskSubmissionService
 __all__ = [
     "AccountService",
     "CapabilityExecutionService",
+    "InboundCompletionService",
+    "TaskPublishingService",
     "AuthenticatedSession",
     "InventoryService",
     "InventoryBalanceService",
