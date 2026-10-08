@@ -7,6 +7,7 @@ from app.core.enums import (
     ActorType,
     ExecutionStatus,
     RecommendationStatus,
+    RecommendationType,
     SubmissionStatus,
     TaskStatus,
     TaskType,
@@ -114,6 +115,20 @@ class TaskLifecycleModelTests(unittest.TestCase):
             constraint_names,
         )
         self.assertTrue(TaskExecution.__table__.columns.idempotency_key.unique)
+
+    def test_reservation_recommendation_has_separate_type_and_result_link(self) -> None:
+        self.assertEqual(
+            TaskRecommendation.__table__.columns.recommendation_type.server_default.arg,
+            RecommendationType.TASK.value,
+        )
+        self.assertTrue(TaskRecommendation.__table__.columns.task_type.nullable)
+        constraint_names = {
+            constraint.name for constraint in TaskRecommendation.__table__.constraints
+        }
+        self.assertIn("ck_task_recommendations_type_source", constraint_names)
+        self.assertIn(
+            "uq_task_recommendations_approved_reservation", constraint_names
+        )
 
 
 if __name__ == "__main__":

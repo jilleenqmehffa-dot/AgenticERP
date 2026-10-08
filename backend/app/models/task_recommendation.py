@@ -19,7 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.enums import ActorType, RecommendationStatus, TaskType
+from app.core.enums import ActorType, RecommendationStatus, RecommendationType, TaskType
 from app.db.base import Base
 
 
@@ -36,13 +36,40 @@ class TaskRecommendation(Base):
         ),
         Index("ix_task_recommendations_source", "source_type", "source_id"),
         UniqueConstraint("approved_task_id", name="uq_task_recommendations_approved_task"),
+        UniqueConstraint(
+            "approved_reservation_id",
+            name="uq_task_recommendations_approved_reservation",
+        ),
+        CheckConstraint(
+            "(recommendation_type = 'TASK' AND task_type IS NOT NULL) OR "
+            "(recommendation_type = 'RESERVATION' AND task_type IS NULL "
+            "AND source_type = 'OUTBOUND_ORDER_ITEM' AND source_id IS NOT NULL)",
+            name="ck_task_recommendations_type_source",
+        ),
+        CheckConstraint(
+            "recommendation_type != 'RESERVATION' OR status != 'APPROVED' "
+            "OR approved_reservation_id IS NOT NULL",
+            name="ck_task_recommendations_reservation_approval_complete",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     recommendation_no: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    task_type: Mapped[TaskType] = mapped_column(
+    recommendation_type: Mapped[RecommendationType] = mapped_column(
+        Enum(
+            RecommendationType,
+            name="recommendation_type",
+            native_enum=False,
+            create_constraint=True,
+            validate_strings=True,
+        ),
+        default=RecommendationType.TASK,
+        server_default=RecommendationType.TASK.value,
+    )
+    task_type: Mapped[TaskType | None] = mapped_column(
         Enum(TaskType, name="recommendation_task_type", native_enum=False,
-             create_constraint=True, validate_strings=True)
+             create_constraint=True, validate_strings=True),
+        nullable=True,
     )
     warehouse_id: Mapped[int] = mapped_column(
         ForeignKey("warehouses.id", ondelete="RESTRICT"), index=True
@@ -76,6 +103,9 @@ class TaskRecommendation(Base):
     approved_task_id: Mapped[int | None] = mapped_column(
         ForeignKey("business_tasks.id", ondelete="SET NULL"), nullable=True
     )
+    approved_reservation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("stock_reservations.id", ondelete="RESTRICT"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -84,5 +114,8 @@ class TaskRecommendation(Base):
     )
 
     approved_task = relationship("BusinessTask", foreign_keys=[approved_task_id])
+    approved_reservation = relationship(
+        "StockReservation", foreign_keys=[approved_reservation_id]
+    )
     proposed_assignee = relationship("Employee", foreign_keys=[proposed_assignee_id])
     reviewer = relationship("Employee", foreign_keys=[reviewed_by_id])

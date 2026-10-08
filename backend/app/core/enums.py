@@ -61,6 +61,11 @@ class RecommendationStatus(StrEnum):
     EXPIRED = "EXPIRED"
 
 
+class RecommendationType(StrEnum):
+    TASK = "TASK"
+    RESERVATION = "RESERVATION"
+
+
 class DispatchRequestStatus(StrEnum):
     PENDING = "PENDING"
     PUBLISHED = "PUBLISHED"
