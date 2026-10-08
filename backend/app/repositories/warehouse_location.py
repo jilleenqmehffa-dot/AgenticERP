@@ -14,3 +14,13 @@ class WarehouseLocationRepository:
             .where(WarehouseLocation.id == location_id)
             .with_for_update()
         )
+
+    async def get_by_warehouse_and_code(
+        self, warehouse_id: int, code: str
+    ) -> WarehouseLocation | None:
+        return await self._session.scalar(
+            select(WarehouseLocation).where(
+                WarehouseLocation.warehouse_id == warehouse_id,
+                WarehouseLocation.code == code,
+            )
+        )

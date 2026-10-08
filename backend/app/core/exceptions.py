@@ -202,3 +202,16 @@ class TaskExecutionAlreadyRunningError(TaskError):
 class InvalidCredentialsError(PermissionError):
     def __init__(self) -> None:
         super().__init__("invalid account credentials")
+
+
+class RecommendationNotFoundError(LookupError):
+    def __init__(self, recommendation_id: int) -> None:
+        super().__init__(f"recommendation not found: {recommendation_id}")
+
+
+class InvalidRecommendationStateError(ValueError):
+    pass
+
+
+class RecommendationReviewPermissionError(PermissionError):
+    pass

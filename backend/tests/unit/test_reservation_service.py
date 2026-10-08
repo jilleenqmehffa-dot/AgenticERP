@@ -140,6 +140,23 @@ class ReservationServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(audit.action, "RESERVE_STOCK")
         self.assertEqual(audit.trace_id, "trace-1")
 
+    async def test_reserve_in_transaction_uses_callers_transaction(self) -> None:
+        with self.assertRaises(RuntimeError):
+            await self.service.reserve_in_transaction(
+                reservation_no="RES-301",
+                outbound_order_item_id=201,
+                quantity=8,
+                location_code="A-01",
+            )
+        async with self.session.begin():
+            await self.service.reserve_in_transaction(
+                reservation_no="RES-301",
+                outbound_order_item_id=201,
+                quantity=8,
+                location_code="A-01",
+            )
+            self.assertEqual(len(self.session.transactions), 1)
+
     async def test_repeated_reservation_number_is_idempotent(self) -> None:
         existing = StockReservation(
             id=301,
