@@ -5,8 +5,9 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import ValidationError
 
+from app.contracts.task_execution import StockTaskInput
 from app.core.enums import (
     ActorType,
     OutboundStatus,
@@ -22,21 +23,15 @@ from app.models.employee import Employee
 if TYPE_CHECKING:
     from app.repositories.outbound_order import OutboundOrderRepository
     from app.repositories.stock_reservation import StockReservationRepository
-    from app.services.inventory_bucket import InventoryBucketService
-    from app.services.inventory_movement import InventoryMovementService
-    from app.services.reservation import ReservationService
-
-
-class _StockActual(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    quantity: Decimal = Field(gt=0, max_digits=18, decimal_places=3)
+    from app.services.inventory.bucket import InventoryBucketService
+    from app.services.inventory.movement import InventoryMovementService
+    from app.services.outbound.reservation import ReservationService
 
 
 @dataclass(frozen=True)
 class ValidatedStockTask:
     item: BusinessTaskItem
-    actual: _StockActual
+    actual: StockTaskInput
 
 
 class _StockCapability:
@@ -53,7 +48,7 @@ class _StockCapability:
         actual_data: object,
     ) -> ValidatedStockTask:
         try:
-            actual = _StockActual.model_validate(actual_data)
+            actual = StockTaskInput.model_validate(actual_data)
         except ValidationError:
             raise InvalidTaskDataError("invalid stock task data") from None
         if len(items) != 1:
@@ -82,7 +77,7 @@ class StockInCapability(_StockCapability):
         await self._inventory_movements.stock_in_in_transaction(
             data.item.product_id,
             task.warehouse.code,
-            data.actual.quantity,
+            data.actual.actual_quantity,
             reference_type="BUSINESS_TASK",
             reference_id=task.id,
             created_by=str(employee.id),
@@ -90,7 +85,7 @@ class StockInCapability(_StockCapability):
             actor_id=str(employee.id),
             trace_id=trace_id,
         )
-        data.item.actual_quantity = data.actual.quantity
+        data.item.actual_quantity = data.actual.actual_quantity
 
 
 class StockOutCapability(_StockCapability):
@@ -133,7 +128,7 @@ class StockOutCapability(_StockCapability):
         await self._inventory_movements.stock_out_in_transaction(
             data.item.product_id,
             task.warehouse.code,
-            data.actual.quantity,
+            data.actual.actual_quantity,
             reference_type="BUSINESS_TASK",
             reference_id=task.id,
             created_by=str(employee.id),
@@ -141,7 +136,7 @@ class StockOutCapability(_StockCapability):
             actor_id=str(employee.id),
             trace_id=trace_id,
         )
-        data.item.actual_quantity = data.actual.quantity
+        data.item.actual_quantity = data.actual.actual_quantity
 
     async def _ship_reservation(
         self,
@@ -177,7 +172,7 @@ class StockOutCapability(_StockCapability):
         reservation = await self._reservations.get_for_update(task.source_id)
         if reservation is None:
             raise ReservationNotFoundError(task.source_id)
-        quantity = data.actual.quantity
+        quantity = Decimal(data.actual.actual_quantity)
         if reservation.status != ReservationStatus.ACTIVE:
             raise InvalidTaskDataError("stock reservation is not active")
         if quantity != reservation.quantity or quantity != data.item.planned_quantity:

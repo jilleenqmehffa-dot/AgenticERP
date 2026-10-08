@@ -13,7 +13,7 @@ from app.models.business_task_item import BusinessTaskItem
 from app.models.employee import Employee
 from app.models.outbound_order import OutboundOrder
 from app.models.outbound_order_item import OutboundOrderItem
-from app.services.packing import PackingService
+from app.services.outbound.packing import PackingService
 
 
 class FakeTransaction:

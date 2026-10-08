@@ -4,8 +4,9 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import ValidationError
 
+from app.contracts.task_execution import MovementTaskInput
 from app.core.enums import ActorType, StockStatus, WarehouseLocationType
 from app.core.exceptions import InvalidTaskDataError
 from app.models.business_task import BusinessTask
@@ -13,13 +14,7 @@ from app.models.business_task_item import BusinessTaskItem
 from app.models.employee import Employee
 
 if TYPE_CHECKING:
-    from app.services.picking import PickingService
-
-
-class _PickingActual(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    quantity: Decimal = Field(gt=0, max_digits=18, decimal_places=3)
+    from app.services.outbound.picking import PickingService
 
 
 @dataclass(frozen=True)
@@ -41,7 +36,7 @@ class PickCapability:
         actual_data: object,
     ) -> ValidatedPickingTask:
         try:
-            actual = _PickingActual.model_validate(actual_data)
+            actual = MovementTaskInput.model_validate(actual_data)
         except ValidationError:
             raise InvalidTaskDataError("invalid picking task data") from None
         if task.source_type != self._SOURCE_TYPE or task.source_id is None:
@@ -60,7 +55,7 @@ class PickCapability:
             raise InvalidTaskDataError(
                 "picking task requires source bucket, locations and PICKING target status"
             )
-        if actual.quantity != item.planned_quantity:
+        if actual.actual_quantity != item.planned_quantity:
             raise InvalidTaskDataError(
                 "picking actual quantity must equal planned quantity"
             )
@@ -77,7 +72,7 @@ class PickCapability:
             or not item.to_location.is_active
         ):
             raise InvalidTaskDataError("picking inventory route is invalid")
-        return ValidatedPickingTask(item=item, quantity=actual.quantity)
+        return ValidatedPickingTask(item=item, quantity=actual.actual_quantity)
 
     async def execute(
         self,

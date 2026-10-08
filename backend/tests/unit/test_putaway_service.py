@@ -73,7 +73,7 @@ class PutawayCapabilityTests(unittest.IsolatedAsyncioTestCase):
         validated = self.capability.validate(
             self.task,
             [self.item],
-            {"quantity": "38.000"},
+            {"actual_quantity": "38.000"},
         )
 
         await self.capability.execute(
@@ -99,7 +99,7 @@ class PutawayCapabilityTests(unittest.IsolatedAsyncioTestCase):
         validated = self.capability.validate(
             self.task,
             [self.item],
-            {"quantity": "38.000"},
+            {"actual_quantity": "38.000"},
         )
         await self.capability.execute(
             self.task,
@@ -118,7 +118,7 @@ class PutawayCapabilityTests(unittest.IsolatedAsyncioTestCase):
             self.capability.validate(
                 self.task,
                 [self.item],
-                {"quantity": "37.000"},
+                {"actual_quantity": "37.000"},
             )
 
         self.item.source_bucket.product_id = 999
@@ -126,7 +126,7 @@ class PutawayCapabilityTests(unittest.IsolatedAsyncioTestCase):
             self.capability.validate(
                 self.task,
                 [self.item],
-                {"quantity": "38.000"},
+                {"actual_quantity": "38.000"},
             )
 
 

@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -7,6 +6,12 @@ from app.core.enums import ActorType, OutboundStatus
 from app.core.exceptions import (
     InvalidPackingDataError,
     OutboundOrderItemNotFoundError,
+)
+from app.core.validation import (
+    actor_id as validate_actor_id,
+    actor_type as validate_actor_type,
+    positive_int,
+    trace_id as validate_trace_id,
 )
 from app.models.audit_log import AuditLog
 from app.models.outbound_order_item import OutboundOrderItem
@@ -134,31 +139,24 @@ class PackingService:
 
     @staticmethod
     def _positive_id(value: object, field_name: str) -> int:
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            raise InvalidPackingDataError(
-                f"{field_name} must be a positive integer"
-            )
-        return value
+        return positive_int(value, field_name, error=InvalidPackingDataError)
 
     @staticmethod
     def _actor_type(value: object) -> ActorType:
-        try:
-            return ActorType(value)
-        except (TypeError, ValueError):
-            raise InvalidPackingDataError("invalid actor_type") from None
+        return validate_actor_type(
+            value,
+            coerce=True,
+            error=InvalidPackingDataError,
+        )
 
     @staticmethod
     def _actor_id(actor_type: ActorType, value: object) -> str:
-        if value is None and actor_type == ActorType.SYSTEM:
-            return ActorType.SYSTEM.value
-        if not isinstance(value, str) or not value.strip():
-            raise InvalidPackingDataError("actor_id is required")
-        return value.strip()
+        return validate_actor_id(
+            actor_type,
+            value,
+            error=InvalidPackingDataError,
+        )
 
     @staticmethod
     def _trace_id(value: object) -> str:
-        if value is None:
-            return str(uuid4())
-        if not isinstance(value, str) or not value.strip():
-            raise InvalidPackingDataError("trace_id must be a nonempty string")
-        return value.strip()
+        return validate_trace_id(value, error=InvalidPackingDataError)

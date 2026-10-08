@@ -4,8 +4,9 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import ValidationError
 
+from app.contracts.task_execution import InventoryCountTaskInput
 from app.core.enums import ActorType
 from app.core.exceptions import InvalidTaskDataError
 from app.models.business_task import BusinessTask
@@ -13,28 +14,7 @@ from app.models.employee import Employee
 
 if TYPE_CHECKING:
     from app.models.inventory_count_item import InventoryCountItem
-    from app.services.inventory_count import InventoryCountService
-
-
-class _InventoryCountResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    inventory_count_item_id: int = Field(gt=0)
-    counted_quantity: Decimal = Field(ge=0, max_digits=18, decimal_places=3)
-
-
-class _InventoryCountActual(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    results: list[_InventoryCountResult] = Field(min_length=1)
-    remark: str | None = Field(default=None, min_length=1, max_length=2000)
-
-    @model_validator(mode="after")
-    def validate_unique_items(self) -> "_InventoryCountActual":
-        item_ids = [result.inventory_count_item_id for result in self.results]
-        if len(item_ids) != len(set(item_ids)):
-            raise ValueError("inventory count item ids must be unique")
-        return self
+    from app.services.inventory.counting import InventoryCountService
 
 
 @dataclass(frozen=True)
@@ -54,7 +34,7 @@ class InventoryCountCapability:
         actual_data: object,
     ) -> ValidatedInventoryCountTask:
         try:
-            actual = _InventoryCountActual.model_validate(actual_data)
+            actual = InventoryCountTaskInput.model_validate(actual_data)
         except ValidationError:
             raise InvalidTaskDataError("invalid inventory count task data") from None
         if not items:

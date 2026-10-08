@@ -12,6 +12,7 @@ from app.core.exceptions import (
     TaskNotFoundError,
     TaskPermissionError,
 )
+from app.core.validation import positive_int
 from app.models.audit_log import AuditLog
 from app.models.business_task import BusinessTask
 from app.models.employee import Employee
@@ -20,7 +21,7 @@ from app.repositories.business_task import BusinessTaskRepository
 from app.repositories.employee import EmployeeRepository
 
 
-class TaskService:
+class TaskLifecycleService:
     def __init__(
         self,
         session: AsyncSession,
@@ -125,9 +126,7 @@ class TaskService:
 
     @staticmethod
     def _validate_task_id(task_id: object) -> int:
-        if isinstance(task_id, bool) or not isinstance(task_id, int) or task_id <= 0:
-            raise InvalidTaskDataError("task_id must be a positive integer")
-        return task_id
+        return positive_int(task_id, "task_id", error=InvalidTaskDataError)
 
     @staticmethod
     def _validate_current_employee(employee: object) -> None:

@@ -11,7 +11,7 @@ from app.core.exceptions import (
 )
 from app.models.business_task import BusinessTask
 from app.models.employee import Employee
-from app.services.task import TaskService
+from app.services.tasks.lifecycle import TaskLifecycleService
 
 
 class FakeTransaction:
@@ -44,7 +44,7 @@ class FakeSession:
         self.begin_calls += 1
         return self.transaction
 
-class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
+class TaskLifecycleServiceTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.session = FakeSession()
         self.employee = Employee(id=23, status=EmployeeStatus.ACTIVE)
@@ -65,7 +65,7 @@ class TaskServiceTests(unittest.IsolatedAsyncioTestCase):
         self.employees.get_for_update = AsyncMock(return_value=self.employee)
         self.audits = MagicMock()
         self.audits.append = AsyncMock(side_effect=lambda audit: audit)
-        self.service = TaskService(
+        self.service = TaskLifecycleService(
             self.session,  # type: ignore[arg-type]
             self.tasks,
             self.employees,

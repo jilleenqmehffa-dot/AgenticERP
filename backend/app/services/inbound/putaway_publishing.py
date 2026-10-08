@@ -6,12 +6,13 @@ from app.core.enums import (
     ActorType,
     DispatchRequestStatus,
     EmployeeStatus,
-    StockStatus,
     TaskStatus,
     TaskType,
     WarehouseLocationType,
 )
 from app.core.exceptions import InactiveEmployeeError, InvalidTaskDataError
+from app.core.validation import positive_int, required_text
+from app.domain.inbound.policies import get_putaway_route
 from app.models.audit_log import AuditLog
 from app.models.business_task import BusinessTask
 from app.models.business_task_item import BusinessTaskItem
@@ -22,22 +23,8 @@ from app.repositories.putaway_dispatch import PutawayDispatchRepository
 from app.repositories.warehouse_location import WarehouseLocationRepository
 
 
-class TaskPublishingService:
+class PutawayPublishingService:
     PUTAWAY_SOURCE_TYPE = "PUTAWAY_DISPATCH"
-    _ROUTES = {
-        StockStatus.PENDING_PUTAWAY: (
-            WarehouseLocationType.STORAGE,
-            StockStatus.AVAILABLE,
-        ),
-        StockStatus.DEFECTIVE: (
-            WarehouseLocationType.QUARANTINE,
-            StockStatus.DEFECTIVE,
-        ),
-        StockStatus.QUARANTINED: (
-            WarehouseLocationType.QUARANTINE,
-            StockStatus.QUARANTINED,
-        ),
-    }
 
     def __init__(
         self,
@@ -64,10 +51,14 @@ class TaskPublishingService:
         publisher_id: str | int | None,
         trace_id: str,
     ) -> BusinessTask:
-        request_id = self._positive_id(request_id, "request_id")
-        assignee_id = self._positive_id(assignee_id, "assignee_id")
-        to_location_id = self._positive_id(to_location_id, "to_location_id")
-        trace_id = self._required_text(trace_id, "trace_id")
+        request_id = positive_int(request_id, "request_id", error=InvalidTaskDataError)
+        assignee_id = positive_int(
+            assignee_id, "assignee_id", error=InvalidTaskDataError
+        )
+        to_location_id = positive_int(
+            to_location_id, "to_location_id", error=InvalidTaskDataError
+        )
+        trace_id = required_text(trace_id, "trace_id", error=InvalidTaskDataError)
         try:
             actor_type = ActorType(publisher_type)
         except (TypeError, ValueError):
@@ -93,7 +84,7 @@ class TaskPublishingService:
             source_bucket = request.source_bucket
             from_location = request.from_location
             expected_route = (
-                self._ROUTES.get(source_bucket.stock_status)
+                get_putaway_route(source_bucket.stock_status)
                 if source_bucket is not None
                 else None
             )
@@ -108,11 +99,11 @@ class TaskPublishingService:
                 or not from_location.is_active
                 or source_bucket.location_code != from_location.code
                 or source_bucket.warehouse_code != from_location.warehouse.code
-                or expected_route
-                != (
-                    request.required_location_type,
-                    request.target_stock_status,
-                )
+                or expected_route is None
+                or expected_route.required_location_type
+                != request.required_location_type
+                or expected_route.target_stock_status
+                != request.target_stock_status
             ):
                 raise InvalidTaskDataError(
                     "dispatch source bucket and receiving location are inconsistent"
@@ -192,7 +183,11 @@ class TaskPublishingService:
         publisher_id: str | int | None,
     ) -> str:
         if actor_type == ActorType.AGENT:
-            return self._required_text(publisher_id, "publisher_id")
+            return required_text(
+                publisher_id,
+                "publisher_id",
+                error=InvalidTaskDataError,
+            )
         if actor_type == ActorType.EMPLOYEE:
             try:
                 employee_id = int(publisher_id)  # type: ignore[arg-type]
@@ -200,7 +195,11 @@ class TaskPublishingService:
                 raise InvalidTaskDataError(
                     "employee publisher_id must be a positive integer"
                 ) from None
-            employee_id = self._positive_id(employee_id, "publisher_id")
+            employee_id = positive_int(
+                employee_id,
+                "publisher_id",
+                error=InvalidTaskDataError,
+            )
             publisher = await self._employees.get_with_role_for_update(employee_id)
             if (
                 publisher is None
@@ -213,15 +212,3 @@ class TaskPublishingService:
                 )
             return str(employee_id)
         raise InvalidTaskDataError("SYSTEM cannot publish putaway tasks")
-
-    @staticmethod
-    def _positive_id(value: object, field: str) -> int:
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            raise InvalidTaskDataError(f"{field} must be a positive integer")
-        return value
-
-    @staticmethod
-    def _required_text(value: object, field: str) -> str:
-        if not isinstance(value, str) or not value.strip():
-            raise InvalidTaskDataError(f"{field} must be a nonempty string")
-        return value.strip()

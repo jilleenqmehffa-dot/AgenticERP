@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import ValidationError
 
+from app.contracts.task_execution import ReceiveTaskInput
 from app.core.enums import ActorType
 from app.core.exceptions import InvalidTaskDataError
 from app.models.business_task import BusinessTask
@@ -13,38 +13,15 @@ from app.models.business_task_item import BusinessTaskItem
 from app.models.employee import Employee
 
 if TYPE_CHECKING:
-    from app.services.receiving import ReceivingResult, ReceivingService
-
-
-class _ReceivingActual(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    received_quantity: Decimal = Field(gt=0, max_digits=18, decimal_places=3)
-    accepted_quantity: Decimal = Field(ge=0, max_digits=18, decimal_places=3)
-    defective_quantity: Decimal = Field(ge=0, max_digits=18, decimal_places=3)
-    quarantined_quantity: Decimal = Field(ge=0, max_digits=18, decimal_places=3)
-    rejected_quantity: Decimal = Field(ge=0, max_digits=18, decimal_places=3)
-    lot_no: str = Field(default="", max_length=100)
-    remark: str | None = Field(default=None, min_length=1, max_length=2000)
-
-    @model_validator(mode="after")
-    def validate_quality_total(self) -> "_ReceivingActual":
-        quality_total = (
-            self.accepted_quantity
-            + self.defective_quantity
-            + self.quarantined_quantity
-            + self.rejected_quantity
-        )
-        if quality_total != self.received_quantity:
-            raise ValueError("quality quantities must equal received_quantity")
-        return self
+    from app.domain.inbound.contracts import ReceivingResult
+    from app.services.inbound.receiving import ReceivingService
 
 
 @dataclass(frozen=True)
 class ValidatedReceivingTask:
     item: BusinessTaskItem
     inbound_receipt_item_id: int
-    actual: _ReceivingActual
+    actual: ReceiveTaskInput
 
 
 class ReceiveCapability:
@@ -60,7 +37,7 @@ class ReceiveCapability:
         actual_data: object,
     ) -> ValidatedReceivingTask:
         try:
-            actual = _ReceivingActual.model_validate(actual_data)
+            actual = ReceiveTaskInput.model_validate(actual_data)
         except ValidationError:
             raise InvalidTaskDataError("invalid receiving task data") from None
         if task.source_type != self._SOURCE_TYPE or task.source_id is None:

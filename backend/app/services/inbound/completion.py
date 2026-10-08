@@ -13,6 +13,10 @@ from app.core.enums import (
     TaskType,
 )
 from app.core.exceptions import InvalidTaskDataError
+from app.domain.inbound.policies import (
+    is_receipt_item_fully_classified,
+    putaway_generation_key,
+)
 from app.models.audit_log import AuditLog
 from app.models.inbound_receipt_item import InboundReceiptItem
 from app.models.receipt_inspection import ReceiptInspection
@@ -155,16 +159,7 @@ class InboundCompletionService:
 
     @staticmethod
     def _item_is_complete(item: InboundReceiptItem) -> bool:
-        classified = (
-            item.accepted_quantity
-            + item.defective_quantity
-            + item.quarantined_quantity
-            + item.rejected_quantity
-        )
-        return (
-            item.received_quantity == item.expected_quantity
-            and classified == item.received_quantity
-        )
+        return is_receipt_item_fully_classified(item)
 
     @staticmethod
     def _inspection_totals_match(
@@ -204,7 +199,5 @@ class InboundCompletionService:
             )
             for stock_status, quantity in quantities:
                 if quantity > 0:
-                    expected.add(
-                        f"PUTAWAY:{inspection.id}:{stock_status.value}"
-                    )
+                    expected.add(putaway_generation_key(inspection.id, stock_status))
         return expected

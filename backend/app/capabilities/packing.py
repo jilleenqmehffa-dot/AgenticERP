@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import ValidationError
 
+from app.contracts.task_execution import PackTaskInput
 from app.core.enums import ActorType
 from app.core.exceptions import InvalidTaskDataError
 from app.models.business_task import BusinessTask
@@ -12,11 +13,7 @@ from app.models.business_task_item import BusinessTaskItem
 from app.models.employee import Employee
 
 if TYPE_CHECKING:
-    from app.services.packing import PackingService
-
-
-class _PackingCompletion(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
+    from app.services.outbound.packing import PackingService
 
 
 @dataclass(frozen=True)
@@ -37,7 +34,7 @@ class PackingCapability:
         actual_data: object,
     ) -> ValidatedPackingTask:
         try:
-            _PackingCompletion.model_validate(actual_data)
+            PackTaskInput.model_validate(actual_data)
         except ValidationError:
             raise InvalidTaskDataError("invalid packing task data") from None
         if task.source_type != self._SOURCE_TYPE or task.source_id is None:

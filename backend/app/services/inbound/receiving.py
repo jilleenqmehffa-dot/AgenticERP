@@ -1,7 +1,5 @@
-from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
-from uuid import uuid4
+from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +14,15 @@ from app.core.exceptions import (
     InvalidReceivingDataError,
     InvalidReceivingStateError,
 )
+from app.core.validation import (
+    actor_id as validate_actor_id,
+    actor_type as validate_actor_type,
+    decimal_quantity,
+    positive_int,
+    trace_id as validate_trace_id,
+)
+from app.domain.inbound.contracts import ReceivingDisposition, ReceivingResult
+from app.domain.inbound.policies import is_receipt_item_fully_classified
 from app.models.audit_log import AuditLog
 from app.models.inbound_receipt_item import InboundReceiptItem
 from app.models.receipt_inspection import ReceiptInspection
@@ -23,28 +30,7 @@ from app.repositories.audit_log import AuditLogRepository
 from app.repositories.inbound_receipt import InboundReceiptRepository
 from app.repositories.receipt_inspection import ReceiptInspectionRepository
 from app.repositories.warehouse_location import WarehouseLocationRepository
-from app.services.inventory_bucket import InventoryBucketService
-
-
-@dataclass(frozen=True)
-class ReceivingDisposition:
-    bucket_id: int
-    stock_status: StockStatus
-    quantity: Decimal
-
-
-@dataclass(frozen=True)
-class ReceivingResult:
-    receipt_id: int
-    receipt_item_id: int
-    inspection_id: int
-    warehouse_id: int
-    receiving_location_id: int
-    product_id: int
-    lot_no: str
-    rejected_quantity: Decimal
-    dispositions: tuple[ReceivingDisposition, ...]
-
+from app.services.inventory.bucket import InventoryBucketService
 
 class ReceivingService:
     def __init__(
@@ -345,16 +331,7 @@ class ReceivingService:
 
     @staticmethod
     def _item_is_complete(item: InboundReceiptItem) -> bool:
-        disposition_total = (
-            item.accepted_quantity
-            + item.defective_quantity
-            + item.quarantined_quantity
-            + item.rejected_quantity
-        )
-        return (
-            item.received_quantity == item.expected_quantity
-            and disposition_total == item.received_quantity
-        )
+        return is_receipt_item_fully_classified(item)
 
     @staticmethod
     def _snapshot(item: InboundReceiptItem) -> dict[str, str]:
@@ -444,11 +421,7 @@ class ReceivingService:
 
     @staticmethod
     def _positive_id(value: object, field_name: str) -> int:
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            raise InvalidReceivingDataError(
-                f"{field_name} must be a positive integer"
-            )
-        return value
+        return positive_int(value, field_name, error=InvalidReceivingDataError)
 
     @staticmethod
     def _quantity(
@@ -457,37 +430,29 @@ class ReceivingService:
         *,
         allow_zero: bool = False,
     ) -> Decimal:
-        if isinstance(value, bool):
-            raise InvalidReceivingDataError(f"invalid {field_name}")
-        try:
-            quantity = Decimal(str(value))
-        except (InvalidOperation, TypeError, ValueError):
-            raise InvalidReceivingDataError(f"invalid {field_name}") from None
-        if not quantity.is_finite() or quantity < 0 or (
-            not allow_zero and quantity == 0
-        ):
-            raise InvalidReceivingDataError(f"invalid {field_name}")
-        return quantity
+        return decimal_quantity(
+            value,
+            field_name,
+            allow_zero=allow_zero,
+            error=InvalidReceivingDataError,
+        )
 
     @staticmethod
     def _actor_type(value: object) -> ActorType:
-        try:
-            return ActorType(value)
-        except (TypeError, ValueError):
-            raise InvalidReceivingDataError("invalid actor_type") from None
+        return validate_actor_type(
+            value,
+            coerce=True,
+            error=InvalidReceivingDataError,
+        )
 
     @staticmethod
     def _actor_id(actor_type: ActorType, value: object) -> str:
-        if value is None and actor_type == ActorType.SYSTEM:
-            return ActorType.SYSTEM.value
-        if not isinstance(value, str) or not value.strip():
-            raise InvalidReceivingDataError("actor_id is required")
-        return value.strip()
+        return validate_actor_id(
+            actor_type,
+            value,
+            error=InvalidReceivingDataError,
+        )
 
     @staticmethod
     def _trace_id(value: object) -> str:
-        if value is None:
-            return str(uuid4())
-        if not isinstance(value, str) or not value.strip():
-            raise InvalidReceivingDataError("trace_id must be a nonempty string")
-        return value.strip()
+        return validate_trace_id(value, error=InvalidReceivingDataError)

@@ -5,7 +5,7 @@ from app.core.exceptions import InvalidCredentialsError
 from app.core.passwords import hash_password, verify_password
 from app.models.user_account import UserAccount
 from app.repositories.user_account import UserAccountRepository
-from app.services.account import AuthenticatedSession, authenticate_account
+from app.services.auth.account import AuthenticatedSession, authenticate_account
 
 
 class FakeTransaction:

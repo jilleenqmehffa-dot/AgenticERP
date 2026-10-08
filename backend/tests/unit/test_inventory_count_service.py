@@ -9,7 +9,7 @@ from app.models.business_task import BusinessTask
 from app.models.employee import Employee
 from app.models.inventory_count_item import InventoryCountItem
 from app.models.warehouse_location import WarehouseLocation
-from app.services.inventory_count import InventoryCountService
+from app.services.inventory.counting import InventoryCountService
 
 
 class FakeSession:

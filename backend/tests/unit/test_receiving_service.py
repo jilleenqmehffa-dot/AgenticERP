@@ -19,7 +19,8 @@ from app.models.inbound_receipt_item import InboundReceiptItem
 from app.models.inventory_bucket import InventoryBucket
 from app.models.warehouse import Warehouse
 from app.models.warehouse_location import WarehouseLocation
-from app.services.receiving import ReceivingResult, ReceivingService
+from app.domain.inbound.contracts import ReceivingResult
+from app.services.inbound.receiving import ReceivingService
 
 
 class FakeTransaction:

@@ -11,7 +11,7 @@ from app.models.stock_movement import StockMovement
 from app.repositories.audit_log import AuditLogRepository
 from app.repositories.inventory import InventoryRepository
 from app.repositories.stock_movement import StockMovementRepository
-from app.services.inventory_balance import InventoryBalanceService
+from app.services.inventory.balance import InventoryBalanceService
 
 
 class InventoryMovementService:

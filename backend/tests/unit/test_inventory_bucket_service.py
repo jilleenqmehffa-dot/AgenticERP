@@ -9,7 +9,7 @@ from app.core.exceptions import (
     InventoryBucketNotFoundError,
 )
 from app.models.inventory_bucket import InventoryBucket
-from app.services.inventory_bucket import InventoryBucketService
+from app.services.inventory.bucket import InventoryBucketService
 
 
 class FakeTransaction:

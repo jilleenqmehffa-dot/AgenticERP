@@ -21,8 +21,8 @@ from app.models.role import Role
 from app.models.task_submission import TaskSubmission
 from app.models.task_execution import TaskExecution
 from app.models.warehouse import Warehouse
-from app.services.task_review import TaskReviewService
-from app.services.task_submission import TaskSubmissionService
+from app.services.tasks.review import TaskReviewService
+from app.services.tasks.submission import TaskSubmissionService
 
 
 class FakeTransaction:

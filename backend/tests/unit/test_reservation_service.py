@@ -18,7 +18,7 @@ from app.models.inventory import Inventory
 from app.models.outbound_order import OutboundOrder
 from app.models.outbound_order_item import OutboundOrderItem
 from app.models.stock_reservation import StockReservation
-from app.services.reservation import ReservationService
+from app.services.outbound.reservation import ReservationService
 
 
 class FakeTransaction:

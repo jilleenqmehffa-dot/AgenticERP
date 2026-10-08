@@ -18,13 +18,13 @@ from app.models.inventory_count_item import InventoryCountItem
 if TYPE_CHECKING:
     from app.repositories.outbound_order import OutboundOrderRepository
     from app.repositories.stock_reservation import StockReservationRepository
-    from app.services.inventory_bucket import InventoryBucketService
-    from app.services.inventory_count import InventoryCountService
-    from app.services.inventory_movement import InventoryMovementService
-    from app.services.packing import PackingService
-    from app.services.picking import PickingService
-    from app.services.receiving import ReceivingService
-    from app.services.reservation import ReservationService
+    from app.services.inventory.bucket import InventoryBucketService
+    from app.services.inventory.counting import InventoryCountService
+    from app.services.inventory.movement import InventoryMovementService
+    from app.services.outbound.packing import PackingService
+    from app.services.outbound.picking import PickingService
+    from app.services.inbound.receiving import ReceivingService
+    from app.services.outbound.reservation import ReservationService
 
 
 class CapabilityDispatcher:

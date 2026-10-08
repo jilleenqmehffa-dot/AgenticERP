@@ -1,4 +1,5 @@
 import unittest
+from dataclasses import replace
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
@@ -11,7 +12,7 @@ from app.core.enums import (
 )
 from app.models.business_task import BusinessTask
 from app.models.putaway_dispatch_request import PutawayDispatchRequest
-from app.services.receiving import ReceivingDisposition, ReceivingResult
+from app.domain.inbound.contracts import ReceivingDisposition, ReceivingResult
 from app.workflows.inbound import InboundWorkflow
 
 
@@ -131,11 +132,9 @@ class InboundWorkflowTests(unittest.IsolatedAsyncioTestCase):
             generation_key="PUTAWAY:501:PENDING_PUTAWAY",
             status=DispatchRequestStatus.PENDING,
         )
-        single = ReceivingResult(
-            **{
-                **self.result.__dict__,
-                "dispositions": (self.result.dispositions[0],),
-            }
+        single = replace(
+            self.result,
+            dispositions=(self.result.dispositions[0],),
         )
         self.dispatches.get_by_generation_key.return_value = existing
 
@@ -149,9 +148,7 @@ class InboundWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.audits.append.assert_not_awaited()
 
     async def test_all_rejected_creates_no_request_and_checks_completion(self) -> None:
-        rejected = ReceivingResult(
-            **{**self.result.__dict__, "dispositions": ()}
-        )
+        rejected = replace(self.result, dispositions=())
 
         await self.workflow.after_task_completed_in_transaction(
             self.task,

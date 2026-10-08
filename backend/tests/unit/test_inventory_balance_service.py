@@ -8,7 +8,7 @@ from app.core.exceptions import (
     InsufficientStockError,
 )
 from app.models.inventory import Inventory
-from app.services.inventory_balance import InventoryBalanceService
+from app.services.inventory.balance import InventoryBalanceService
 
 
 class FakeSession:

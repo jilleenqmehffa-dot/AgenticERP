@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-from uuid import uuid4
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +18,12 @@ from app.core.exceptions import (
     OutboundOrderItemNotFoundError,
     ReservationNotFoundError,
 )
+from app.core.validation import (
+    actor_id as validate_actor_id,
+    actor_type as validate_actor_type,
+    positive_int,
+    trace_id as validate_trace_id,
+)
 from app.models.audit_log import AuditLog
 from app.models.outbound_order import OutboundOrder
 from app.models.outbound_order_item import OutboundOrderItem
@@ -25,8 +32,8 @@ from app.repositories.audit_log import AuditLogRepository
 from app.repositories.inventory import InventoryRepository
 from app.repositories.outbound_order import OutboundOrderRepository
 from app.repositories.stock_reservation import StockReservationRepository
-from app.services.inventory_balance import InventoryBalanceService
-from app.services.inventory_bucket import InventoryBucketService
+from app.services.inventory.balance import InventoryBalanceService
+from app.services.inventory.bucket import InventoryBucketService
 
 
 class ReservationService:
@@ -76,7 +83,7 @@ class ReservationService:
             actor_id=actor_id,
             trace_id=trace_id,
         )
-        async with self._session.begin():
+        async with self._reservation_transaction():
             existing = await self._reservations.get_by_no_for_update(
                 values["reservation_no"]
             )
@@ -185,6 +192,41 @@ class ReservationService:
                 )
             )
             return reservation
+
+    async def reserve_in_transaction(
+        self,
+        *,
+        reservation_no: str,
+        outbound_order_item_id: int,
+        quantity: Decimal | int,
+        location_code: str = "",
+        lot_no: str = "",
+        expires_at: datetime | None = None,
+        actor_type: ActorType = ActorType.SYSTEM,
+        actor_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> StockReservation:
+        if not self._session.in_transaction():
+            raise RuntimeError("reserve_in_transaction requires an active transaction")
+        return await self.reserve(
+            reservation_no=reservation_no,
+            outbound_order_item_id=outbound_order_item_id,
+            quantity=quantity,
+            location_code=location_code,
+            lot_no=lot_no,
+            expires_at=expires_at,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            trace_id=trace_id,
+        )
+
+    @asynccontextmanager
+    async def _reservation_transaction(self) -> AsyncIterator[None]:
+        if self._session.in_transaction():
+            yield
+        else:
+            async with self._session.begin():
+                yield
 
     async def release(
         self,
@@ -459,11 +501,7 @@ class ReservationService:
 
     @staticmethod
     def _positive_id(value: object, field_name: str) -> int:
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            raise InvalidReservationDataError(
-                f"{field_name} must be a positive integer"
-            )
-        return value
+        return positive_int(value, field_name, error=InvalidReservationDataError)
 
     @staticmethod
     def _quantity(value: object) -> Decimal:
@@ -503,35 +541,19 @@ class ReservationService:
 
     @staticmethod
     def _actor_type(value: object) -> ActorType:
-        if not isinstance(value, ActorType):
-            raise InvalidReservationDataError("actor_type is invalid")
-        return value
+        return validate_actor_type(value, error=InvalidReservationDataError)
 
     @staticmethod
     def _actor_id(actor_type: ActorType, value: object) -> str:
-        if value is None and actor_type == ActorType.SYSTEM:
-            return "SYSTEM"
-        if not isinstance(value, str) or not value.strip():
-            raise InvalidReservationDataError(
-                "actor_id is required for this actor_type"
-            )
-        normalized = value.strip()
-        if len(normalized) > 255:
-            raise InvalidReservationDataError("actor_id exceeds 255 characters")
-        return normalized
+        return validate_actor_id(
+            actor_type,
+            value,
+            error=InvalidReservationDataError,
+        )
 
     @staticmethod
     def _trace_id(value: object) -> str:
-        if value is None:
-            return str(uuid4())
-        if not isinstance(value, str) or not value.strip():
-            raise InvalidReservationDataError(
-                "trace_id must be a nonempty string"
-            )
-        normalized = value.strip()
-        if len(normalized) > 64:
-            raise InvalidReservationDataError("trace_id exceeds 64 characters")
-        return normalized
+        return validate_trace_id(value, error=InvalidReservationDataError)
 
     @staticmethod
     def _reservation_audit(

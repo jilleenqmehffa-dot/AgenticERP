@@ -19,6 +19,7 @@ from app.core.exceptions import (
     TaskReviewPermissionError,
     TaskSubmissionNotFoundError,
 )
+from app.core.validation import positive_int
 from app.models.audit_log import AuditLog
 from app.models.business_task import BusinessTask
 from app.models.employee import Employee
@@ -260,6 +261,4 @@ class TaskReviewService:
 
     @staticmethod
     def _positive_id(value: object, field_name: str) -> int:
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            raise InvalidTaskDataError(f"{field_name} must be a positive integer")
-        return value
+        return positive_int(value, field_name, error=InvalidTaskDataError)

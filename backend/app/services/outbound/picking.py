@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,13 +10,19 @@ from app.core.exceptions import (
     OutboundOrderItemNotFoundError,
     ReservationNotFoundError,
 )
+from app.core.validation import (
+    actor_id as validate_actor_id,
+    actor_type as validate_actor_type,
+    positive_int,
+    trace_id as validate_trace_id,
+)
 from app.models.audit_log import AuditLog
 from app.models.outbound_order_item import OutboundOrderItem
 from app.models.stock_reservation import StockReservation
 from app.repositories.audit_log import AuditLogRepository
 from app.repositories.outbound_order import OutboundOrderRepository
 from app.repositories.stock_reservation import StockReservationRepository
-from app.services.inventory_bucket import InventoryBucketService
+from app.services.inventory.bucket import InventoryBucketService
 
 
 class PickingService:
@@ -259,11 +264,7 @@ class PickingService:
 
     @staticmethod
     def _positive_id(value: object, field_name: str) -> int:
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            raise InvalidPickingDataError(
-                f"{field_name} must be a positive integer"
-            )
-        return value
+        return positive_int(value, field_name, error=InvalidPickingDataError)
 
     @staticmethod
     def _quantity(value: object) -> Decimal:
@@ -295,22 +296,16 @@ class PickingService:
 
     @staticmethod
     def _actor_type(value: object) -> ActorType:
-        if not isinstance(value, ActorType):
-            raise InvalidPickingDataError("actor_type is invalid")
-        return value
+        return validate_actor_type(value, error=InvalidPickingDataError)
 
     @staticmethod
     def _actor_id(actor_type: ActorType, value: object) -> str:
-        if value is None and actor_type == ActorType.SYSTEM:
-            return ActorType.SYSTEM.value
-        if not isinstance(value, str) or not value.strip():
-            raise InvalidPickingDataError("actor_id is required")
-        return value.strip()
+        return validate_actor_id(
+            actor_type,
+            value,
+            error=InvalidPickingDataError,
+        )
 
     @staticmethod
     def _trace_id(value: object) -> str:
-        if value is None:
-            return str(uuid4())
-        if not isinstance(value, str) or not value.strip():
-            raise InvalidPickingDataError("trace_id must be a nonempty string")
-        return value.strip()
+        return validate_trace_id(value, error=InvalidPickingDataError)

@@ -10,7 +10,7 @@ from app.models.inbound_receipt import InboundReceipt
 from app.models.inbound_receipt_item import InboundReceiptItem
 from app.models.putaway_dispatch_request import PutawayDispatchRequest
 from app.models.receipt_inspection import ReceiptInspection
-from app.services.inbound_completion import InboundCompletionService
+from app.services.inbound.completion import InboundCompletionService
 
 
 class FakeSession:

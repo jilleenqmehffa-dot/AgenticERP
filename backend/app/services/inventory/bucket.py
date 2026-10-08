@@ -1,5 +1,4 @@
-from decimal import Decimal, InvalidOperation
-from uuid import uuid4
+from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,6 +7,12 @@ from app.core.exceptions import (
     InsufficientBucketStockError,
     InvalidInventoryBucketDataError,
     InventoryBucketNotFoundError,
+)
+from app.core.validation import (
+    actor_id as validate_actor_id,
+    actor_type as validate_actor_type,
+    decimal_quantity,
+    trace_id as validate_trace_id,
 )
 from app.models.audit_log import AuditLog
 from app.models.inventory_bucket import InventoryBucket
@@ -407,15 +412,11 @@ class InventoryBucketService:
 
     @staticmethod
     def _quantity(value: object) -> Decimal:
-        try:
-            quantity = Decimal(str(value))
-        except (InvalidOperation, TypeError, ValueError):
-            raise InvalidInventoryBucketDataError("quantity must be numeric") from None
-        if not quantity.is_finite() or quantity <= 0:
-            raise InvalidInventoryBucketDataError(
-                "quantity must be greater than zero"
-            )
-        return quantity
+        return decimal_quantity(
+            value,
+            "quantity",
+            error=InvalidInventoryBucketDataError,
+        )
 
     @staticmethod
     def _optional_code(value: object, field_name: str, max_length: int) -> str:
@@ -436,35 +437,23 @@ class InventoryBucketService:
 
     @staticmethod
     def _actor_type(value: object) -> ActorType:
-        if not isinstance(value, ActorType):
-            raise InvalidInventoryBucketDataError("actor_type is invalid")
-        return value
+        return validate_actor_type(value, error=InvalidInventoryBucketDataError)
 
     @staticmethod
     def _actor_id(actor_type: object, actor_id: object) -> str:
-        if actor_id is None and actor_type == ActorType.SYSTEM:
-            return "SYSTEM"
-        if not isinstance(actor_id, str) or not actor_id.strip():
-            raise InvalidInventoryBucketDataError(
-                "actor_id is required for this actor_type"
-            )
-        normalized = actor_id.strip()
-        if len(normalized) > 255:
-            raise InvalidInventoryBucketDataError("actor_id exceeds 255 characters")
-        return normalized
+        actor = validate_actor_type(
+            actor_type,
+            error=InvalidInventoryBucketDataError,
+        )
+        return validate_actor_id(
+            actor,
+            actor_id,
+            error=InvalidInventoryBucketDataError,
+        )
 
     @staticmethod
     def _trace_id(value: object) -> str:
-        if value is None:
-            return str(uuid4())
-        if not isinstance(value, str) or not value.strip():
-            raise InvalidInventoryBucketDataError(
-                "trace_id must be a nonempty string"
-            )
-        normalized = value.strip()
-        if len(normalized) > 64:
-            raise InvalidInventoryBucketDataError("trace_id exceeds 64 characters")
-        return normalized
+        return validate_trace_id(value, error=InvalidInventoryBucketDataError)
 
     @classmethod
     def _audit(

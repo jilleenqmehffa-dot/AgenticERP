@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
+from app.capabilities.dispatcher import CapabilityDispatcher
 from app.core.enums import (
     EmployeeStatus,
     ExecutionStatus,
@@ -31,8 +32,8 @@ from app.models.task_execution import TaskExecution
 from app.models.task_submission import TaskSubmission
 from app.models.warehouse import Warehouse
 from app.models.warehouse_location import WarehouseLocation
-from app.services.capability_execution import CapabilityExecutionService
-from app.services.receiving import ReceivingResult
+from app.services.tasks.execution import CapabilityExecutionService
+from app.domain.inbound.contracts import ReceivingResult
 
 
 class FakeTransaction:
@@ -164,13 +165,7 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.inventory_count.record_counts_in_transaction = AsyncMock()
         self.inbound_workflow = MagicMock()
         self.inbound_workflow.after_task_completed_in_transaction = AsyncMock()
-        self.service = CapabilityExecutionService(
-            self.session,  # type: ignore[arg-type]
-            self.executions,
-            self.tasks,
-            self.submissions,
-            self.employees,
-            self.audits,
+        dispatcher = CapabilityDispatcher(
             self.inventory,
             self.packing,
             self.receiving,
@@ -179,7 +174,16 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
             self.reservation_service,
             self.reservations,
             self.outbound,
-            inventory_count_service=self.inventory_count,
+            self.inventory_count,
+        )
+        self.service = CapabilityExecutionService(
+            self.session,  # type: ignore[arg-type]
+            self.executions,
+            self.tasks,
+            self.submissions,
+            self.employees,
+            self.audits,
+            dispatcher=dispatcher,
             inbound_workflow=self.inbound_workflow,
         )
 

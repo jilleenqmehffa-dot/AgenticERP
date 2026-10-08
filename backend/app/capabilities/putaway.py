@@ -4,23 +4,19 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import ValidationError
 
+from app.contracts.task_execution import MovementTaskInput
 from app.core.enums import ActorType, StockStatus, WarehouseLocationType
 from app.core.exceptions import InvalidTaskDataError
+from app.domain.inbound.policies import get_putaway_route
 from app.models.business_task import BusinessTask
 from app.models.business_task_item import BusinessTaskItem
 from app.models.employee import Employee
 
 if TYPE_CHECKING:
-    from app.services.inventory_bucket import InventoryBucketService
-    from app.services.inventory_movement import InventoryMovementService
-
-
-class _PutawayActual(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    quantity: Decimal = Field(gt=0, max_digits=18, decimal_places=3)
+    from app.services.inventory.bucket import InventoryBucketService
+    from app.services.inventory.movement import InventoryMovementService
 
 
 @dataclass(frozen=True)
@@ -45,7 +41,7 @@ class PutawayCapability:
         actual_data: object,
     ) -> ValidatedPutawayTask:
         try:
-            actual = _PutawayActual.model_validate(actual_data)
+            actual = MovementTaskInput.model_validate(actual_data)
         except ValidationError:
             raise InvalidTaskDataError("invalid putaway task data") from None
         if len(items) != 1:
@@ -60,7 +56,7 @@ class PutawayCapability:
             raise InvalidTaskDataError(
                 "putaway task requires source bucket, source location, target location and target status"
             )
-        quantity = actual.quantity
+        quantity = actual.actual_quantity
         if quantity != item.planned_quantity:
             raise InvalidTaskDataError(
                 "putaway actual quantity must equal planned quantity"
@@ -77,21 +73,12 @@ class PutawayCapability:
             or not item.to_location.is_active
         ):
             raise InvalidTaskDataError("putaway inventory identity is inconsistent")
-        allowed_route = {
-            (StockStatus.PENDING_PUTAWAY, StockStatus.AVAILABLE): (
-                WarehouseLocationType.STORAGE
-            ),
-            (StockStatus.DEFECTIVE, StockStatus.DEFECTIVE): (
-                WarehouseLocationType.QUARANTINE
-            ),
-            (StockStatus.QUARANTINED, StockStatus.QUARANTINED): (
-                WarehouseLocationType.QUARANTINE
-            ),
-        }
-        expected_location_type = allowed_route.get(
-            (source.stock_status, item.target_stock_status)
-        )
-        if expected_location_type != item.to_location.location_type:
+        route = get_putaway_route(source.stock_status)
+        if (
+            route is None
+            or route.target_stock_status != item.target_stock_status
+            or route.required_location_type != item.to_location.location_type
+        ):
             raise InvalidTaskDataError("putaway quality route is invalid")
         return ValidatedPutawayTask(item=item, quantity=quantity)
 

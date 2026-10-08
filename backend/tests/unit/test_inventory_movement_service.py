@@ -12,7 +12,7 @@ from app.core.exceptions import (
     InventoryNotFoundError,
 )
 from app.models.inventory import Inventory
-from app.services.inventory_movement import InventoryMovementService
+from app.services.inventory.movement import InventoryMovementService
 
 
 class FakeTransaction:

@@ -25,7 +25,7 @@ from app.models.outbound_order_item import OutboundOrderItem
 from app.models.stock_reservation import StockReservation
 from app.models.warehouse import Warehouse
 from app.models.warehouse_location import WarehouseLocation
-from app.services.picking import PickingService
+from app.services.outbound.picking import PickingService
 
 
 class FakeTransaction:
@@ -208,7 +208,7 @@ class PickCapabilityTests(unittest.IsolatedAsyncioTestCase):
         validated = self.capability.validate(
             self.task,
             [self.item],
-            {"quantity": "10.000"},
+            {"actual_quantity": "10.000"},
         )
         await self.capability.execute(
             self.task,
@@ -230,7 +230,7 @@ class PickCapabilityTests(unittest.IsolatedAsyncioTestCase):
             self.capability.validate(
                 self.task,
                 [self.item],
-                {"quantity": "10.000"},
+                {"actual_quantity": "10.000"},
             )
 
 

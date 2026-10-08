@@ -8,30 +8,20 @@ from app.core.enums import (
     WarehouseLocationType,
 )
 from app.core.exceptions import InvalidTaskDataError
+from app.domain.inbound.contracts import ReceivingResult
+from app.domain.inbound.policies import (
+    get_putaway_route,
+    putaway_generation_key,
+)
 from app.models.audit_log import AuditLog
 from app.models.business_task import BusinessTask
 from app.models.putaway_dispatch_request import PutawayDispatchRequest
 from app.repositories.audit_log import AuditLogRepository
 from app.repositories.putaway_dispatch import PutawayDispatchRepository
-from app.services.inbound_completion import InboundCompletionService
-from app.services.receiving import ReceivingResult
+from app.services.inbound.completion import InboundCompletionService
 
 
 class InboundWorkflow:
-    _ROUTES = {
-        StockStatus.PENDING_PUTAWAY: (
-            WarehouseLocationType.STORAGE,
-            StockStatus.AVAILABLE,
-        ),
-        StockStatus.DEFECTIVE: (
-            WarehouseLocationType.QUARANTINE,
-            StockStatus.DEFECTIVE,
-        ),
-        StockStatus.QUARANTINED: (
-            WarehouseLocationType.QUARANTINE,
-            StockStatus.QUARANTINED,
-        ),
-    }
     PUTAWAY_SOURCE_TYPE = "PUTAWAY_DISPATCH"
 
     def __init__(
@@ -88,14 +78,16 @@ class InboundWorkflow:
         trace_id: str,
     ) -> None:
         for disposition in result.dispositions:
-            route = self._ROUTES.get(disposition.stock_status)
+            route = get_putaway_route(disposition.stock_status)
             if route is None:
                 raise InvalidTaskDataError(
                     f"unsupported receiving disposition: {disposition.stock_status}"
                 )
-            location_type, target_status = route
-            generation_key = (
-                f"PUTAWAY:{result.inspection_id}:{disposition.stock_status.value}"
+            location_type = route.required_location_type
+            target_status = route.target_stock_status
+            generation_key = putaway_generation_key(
+                result.inspection_id,
+                disposition.stock_status,
             )
             request = await self._dispatches.get_by_generation_key(generation_key)
             if request is not None:

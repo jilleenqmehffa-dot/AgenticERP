@@ -18,7 +18,7 @@ from app.models.putaway_dispatch_request import PutawayDispatchRequest
 from app.models.role import Role
 from app.models.warehouse import Warehouse
 from app.models.warehouse_location import WarehouseLocation
-from app.services.task_publishing import TaskPublishingService
+from app.services.inbound.putaway_publishing import PutawayPublishingService
 
 
 class FakeTransaction:
@@ -34,7 +34,7 @@ class FakeSession:
         return FakeTransaction()
 
 
-class TaskPublishingServiceTests(unittest.IsolatedAsyncioTestCase):
+class PutawayPublishingServiceTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.session = FakeSession()
         source = InventoryBucket(
@@ -95,7 +95,7 @@ class TaskPublishingServiceTests(unittest.IsolatedAsyncioTestCase):
         self.locations.get_for_update = AsyncMock(return_value=self.target)
         self.audits = MagicMock()
         self.audits.append = AsyncMock(side_effect=lambda audit: audit)
-        self.service = TaskPublishingService(
+        self.service = PutawayPublishingService(
             self.session,  # type: ignore[arg-type]
             self.dispatches,
             self.tasks,
