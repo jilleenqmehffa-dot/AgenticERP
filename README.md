@@ -22,3 +22,22 @@ uv run uvicorn app.main:app --reload
 cd backend
 uv run python -m unittest discover -s tests -q
 ```
+
+## 预留建议审核
+
+预留建议使用 `recommendation_type=RESERVATION`、`source_type=OUTBOUND_ORDER_ITEM`
+和出库行 `source_id`。`proposed_data` 包含 `quantity`、`location_code`，可选
+`lot_no` 和 `expires_at`。建议由 Agent 创建后，仓库经理使用账号的 HTTP Basic
+凭据调用：
+
+```text
+POST /reservation-recommendations/{id}/approve
+POST /reservation-recommendations/{id}/reject
+Content-Type: application/json
+
+{"reason":"审核理由"}
+```
+
+批准操作会在一个数据库事务中创建库存预留、关联建议并写入审计；重复批准返回原预留。
+驳回只记录决定和审计，不占用库存。接口返回建议状态及批准后生成的
+`approved_reservation_id`。
