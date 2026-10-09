@@ -17,12 +17,18 @@ from app.services.outbound.picking import PickingService
 from app.services.outbound.reservation import ReservationService
 from app.services.tasks.execution import CapabilityExecutionService
 from app.workflows.inbound import InboundWorkflow
+from app.workflows.inventory_count import InventoryCountWorkflow
+from app.workflows.outbound import OutboundWorkflow
+from app.workflows.reservation import ReservationWorkflow
 
 
 @dataclass(frozen=True, slots=True)
 class CapabilityRuntime:
     dispatcher: CapabilityDispatcher
     inbound_workflow: InboundWorkflow
+    inventory_count_workflow: InventoryCountWorkflow
+    reservation_workflow: ReservationWorkflow
+    outbound_workflow: OutboundWorkflow
 
 
 def build_capability_runtime(
@@ -43,6 +49,13 @@ def build_capability_runtime(
         bucket_service=buckets,
         balance_service=balances,
     )
+    inventory_count_workflow = InventoryCountWorkflow(
+        session,
+        task_repository=task_repository,
+        audit_repository=audit_repository,
+        bucket_service=buckets,
+        movement_service=movements,
+    )
     dispatcher = CapabilityDispatcher(
         movements,
         PackingService(session, outbound_repository=outbound),
@@ -62,12 +75,23 @@ def build_capability_runtime(
             task_repository=task_repository,
             audit_repository=audit_repository,
         ),
+        inventory_count_workflow,
     )
     return CapabilityRuntime(
         dispatcher=dispatcher,
         inbound_workflow=InboundWorkflow(
             session,
             audit_repository=audit_repository,
+        ),
+        inventory_count_workflow=inventory_count_workflow,
+        reservation_workflow=ReservationWorkflow(
+            session,
+            audit_repository=audit_repository,
+        ),
+        outbound_workflow=OutboundWorkflow(
+            session,
+            outbound_repository=outbound,
+            reservation_repository=reservations,
         ),
     )
 
@@ -88,4 +112,6 @@ def build_capability_execution_service(
         audit_repository=audits,
         dispatcher=runtime.dispatcher,
         inbound_workflow=runtime.inbound_workflow,
+        inventory_count_workflow=runtime.inventory_count_workflow,
+        outbound_workflow=runtime.outbound_workflow,
     )

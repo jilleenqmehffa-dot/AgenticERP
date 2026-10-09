@@ -165,6 +165,12 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.inventory_count.record_counts_in_transaction = AsyncMock()
         self.inbound_workflow = MagicMock()
         self.inbound_workflow.after_task_completed_in_transaction = AsyncMock()
+        self.inventory_count_workflow = MagicMock()
+        self.inventory_count_workflow.after_task_completed_in_transaction = AsyncMock()
+        self.inventory_count_workflow.validate_review_task_in_transaction = AsyncMock()
+        self.inventory_count_workflow.apply_for_task_in_transaction = AsyncMock()
+        self.outbound_workflow = MagicMock()
+        self.outbound_workflow.after_task_completed_in_transaction = AsyncMock()
         dispatcher = CapabilityDispatcher(
             self.inventory,
             self.packing,
@@ -175,6 +181,7 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
             self.reservations,
             self.outbound,
             self.inventory_count,
+            self.inventory_count_workflow,
         )
         self.service = CapabilityExecutionService(
             self.session,  # type: ignore[arg-type]
@@ -185,6 +192,8 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
             self.audits,
             dispatcher=dispatcher,
             inbound_workflow=self.inbound_workflow,
+            inventory_count_workflow=self.inventory_count_workflow,
+            outbound_workflow=self.outbound_workflow,
         )
 
     async def test_execute_runs_capability_and_marks_execution_succeeded(self) -> None:
@@ -222,6 +231,7 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
             transition_states,
             [(TaskStatus.COMPLETED, ExecutionStatus.SUCCEEDED)],
         )
+        self.outbound_workflow.after_task_completed_in_transaction.assert_awaited_once()
 
     async def test_reservation_stock_out_consumes_picking_stock(self) -> None:
         self.task.source_type = "STOCK_RESERVATION"
@@ -438,8 +448,46 @@ class CapabilityExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(count_call.args[0], [count_item])
         self.assertEqual(count_call.args[1], {601: Decimal("38.000")})
         self.assertEqual(self.task.status, TaskStatus.COMPLETED)
+        self.inventory_count_workflow.after_task_completed_in_transaction.assert_awaited_once_with(
+            self.task,
+            [count_item],
+            None,
+            trace_id=self.audits.append.await_args_list[0].args[0].trace_id,
+        )
         self.inventory.stock_in_in_transaction.assert_not_awaited()
         self.inventory.stock_out_in_transaction.assert_not_awaited()
+
+    async def test_review_task_uses_workflow_and_produces_decision(self) -> None:
+        self.task.task_type = TaskType.INVENTORY_COUNT_REVIEW
+        self.task.source_type = "INVENTORY_ADJUSTMENT"
+        self.task.source_id = 51
+        self.tasks.get_items_for_update.return_value = []
+        self.submission.form_data = {"decision": "APPROVE", "reason": "verified"}
+        self.execution.capability_name = TaskType.INVENTORY_COUNT_REVIEW.value
+
+        await self.service.execute(execution_id=701)
+
+        self.inventory_count_workflow.validate_review_task_in_transaction.assert_awaited_once_with(
+            self.task, 23
+        )
+        hook = self.inventory_count_workflow.after_task_completed_in_transaction.await_args
+        self.assertEqual(hook.args[2].decision, "APPROVE")
+        self.assertEqual(self.task.status, TaskStatus.COMPLETED)
+
+    async def test_adjustment_task_uses_workflow_before_completion(self) -> None:
+        self.task.task_type = TaskType.INVENTORY_ADJUSTMENT
+        self.task.source_type = "INVENTORY_ADJUSTMENT"
+        self.task.source_id = 51
+        self.tasks.get_items_for_update.return_value = []
+        self.submission.form_data = {"remark": "adjusted"}
+        self.execution.capability_name = TaskType.INVENTORY_ADJUSTMENT.value
+
+        await self.service.execute(execution_id=701)
+
+        self.inventory_count_workflow.apply_for_task_in_transaction.assert_awaited_once()
+        hook = self.inventory_count_workflow.after_task_completed_in_transaction.await_args
+        self.assertEqual(hook.args[:3], (self.task, [], None))
+        self.assertEqual(self.task.status, TaskStatus.COMPLETED)
 
     async def test_succeeded_execution_is_idempotent(self) -> None:
         await self.service.execute(execution_id=701)

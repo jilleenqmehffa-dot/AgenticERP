@@ -33,6 +33,8 @@ from app.repositories.task_execution import TaskExecutionRepository
 from app.repositories.task_submission import TaskSubmissionRepository
 from app.services.tasks.submission import TaskSubmissionService
 from app.workflows.inbound import InboundWorkflow
+from app.workflows.inventory_count import InventoryCountWorkflow
+from app.workflows.outbound import OutboundWorkflow
 
 
 class CapabilityExecutionService:
@@ -47,6 +49,8 @@ class CapabilityExecutionService:
         *,
         dispatcher: CapabilityDispatcher,
         inbound_workflow: InboundWorkflow,
+        inventory_count_workflow: InventoryCountWorkflow | None = None,
+        outbound_workflow: OutboundWorkflow | None = None,
     ) -> None:
         self._session = session
         self._executions = execution_repository or TaskExecutionRepository(session)
@@ -56,6 +60,8 @@ class CapabilityExecutionService:
         self._audits = audit_repository or AuditLogRepository(session)
         self._dispatcher = dispatcher
         self._inbound_workflow = inbound_workflow
+        self._inventory_count_workflow = inventory_count_workflow or InventoryCountWorkflow(session)
+        self._outbound_workflow = outbound_workflow or OutboundWorkflow(session)
 
     async def execute(self, *, execution_id: int) -> TaskExecution:
         execution_id = self._positive_id(execution_id, "execution_id")
@@ -162,6 +168,16 @@ class CapabilityExecutionService:
                 await self._inbound_workflow.after_task_completed_in_transaction(
                     task,
                     capability_result,
+                    trace_id=attempt_trace_id,
+                )
+                await self._inventory_count_workflow.after_task_completed_in_transaction(
+                    task,
+                    inventory_count_items,
+                    capability_result,
+                    trace_id=attempt_trace_id,
+                )
+                await self._outbound_workflow.after_task_completed_in_transaction(
+                    task,
                     trace_id=attempt_trace_id,
                 )
                 await self._audits.append(
