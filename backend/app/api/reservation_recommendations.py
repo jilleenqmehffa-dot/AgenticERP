@@ -15,9 +15,7 @@ from app.schemas.reservation_recommendation import (
     ReservationRecommendationReviewResult,
 )
 from app.services.auth.account import AccountService
-from app.services.outbound.reservation_recommendation import (
-    ReservationRecommendationReviewService,
-)
+from app.workflows.reservation import ReservationWorkflow
 
 router = APIRouter(prefix="/reservation-recommendations", tags=["reservations"])
 _basic = HTTPBasic()
@@ -61,7 +59,7 @@ async def approve_reservation_recommendation(
     session: AsyncSession = Depends(get_db_session),
 ) -> ReservationRecommendationReviewResult:
     try:
-        recommendation = await ReservationRecommendationReviewService(session).approve(
+        recommendation = await ReservationWorkflow(session).approve(
             recommendation_id=recommendation_id,
             reviewer_id=reviewer_id,
             reason=request.reason,
@@ -97,7 +95,7 @@ async def reject_reservation_recommendation(
     session: AsyncSession = Depends(get_db_session),
 ) -> ReservationRecommendationReviewResult:
     try:
-        recommendation = await ReservationRecommendationReviewService(session).reject(
+        recommendation = await ReservationWorkflow(session).reject(
             recommendation_id=recommendation_id,
             reviewer_id=reviewer_id,
             reason=request.reason,

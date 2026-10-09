@@ -40,9 +40,9 @@ class ReservationRecommendationApiTests(unittest.IsolatedAsyncioTestCase):
             approved_reservation_id=41,
         )
         with patch(
-            "app.api.reservation_recommendations.ReservationRecommendationReviewService"
-        ) as service_type:
-            service_type.return_value.approve = AsyncMock(return_value=recommendation)
+            "app.api.reservation_recommendations.ReservationWorkflow"
+        ) as workflow_type:
+            workflow_type.return_value.approve = AsyncMock(return_value=recommendation)
             response = await self.client.post(
                 "/reservation-recommendations/17/approve",
                 json={"reason": "approved"},
@@ -53,9 +53,9 @@ class ReservationRecommendationApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_conflicting_decision_returns_409(self) -> None:
         with patch(
-            "app.api.reservation_recommendations.ReservationRecommendationReviewService"
-        ) as service_type:
-            service_type.return_value.reject = AsyncMock(
+            "app.api.reservation_recommendations.ReservationWorkflow"
+        ) as workflow_type:
+            workflow_type.return_value.reject = AsyncMock(
                 side_effect=InvalidRecommendationStateError("already approved")
             )
             response = await self.client.post(
