@@ -32,6 +32,8 @@ from app.repositories.business_task import BusinessTaskRepository
 from app.repositories.employee import EmployeeRepository
 from app.repositories.task_submission import TaskSubmissionRepository
 from app.schemas.task_workflow import (
+    InventoryAdjustmentForm,
+    InventoryCountReviewForm,
     InventoryCountTaskSubmissionForm,
     PackTaskSubmissionForm,
     PutawayTaskSubmissionForm,
@@ -183,6 +185,18 @@ class TaskSubmissionService:
             return cls.validate_receive_form(form_data)
         if task_type == TaskType.INVENTORY_COUNT:
             return cls.validate_inventory_count_form(form_data)
+        if task_type == TaskType.INVENTORY_COUNT_REVIEW:
+            try:
+                return InventoryCountReviewForm.model_validate(form_data).model_dump(mode="json")
+            except ValidationError:
+                raise InvalidTaskDataError("invalid inventory review submission") from None
+        if task_type == TaskType.INVENTORY_ADJUSTMENT:
+            try:
+                return InventoryAdjustmentForm.model_validate(form_data).model_dump(
+                    mode="json", exclude_none=True
+                )
+            except ValidationError:
+                raise InvalidTaskDataError("invalid inventory adjustment submission") from None
         if task_type in {TaskType.PUTAWAY, TaskType.PICK}:
             return cls.validate_movement_form(form_data, task_type)
         return cls.validate_stock_form(form_data)

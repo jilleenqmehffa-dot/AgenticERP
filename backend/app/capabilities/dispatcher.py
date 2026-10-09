@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import Any, TYPE_CHECKING
 
 from app.capabilities.inventory_count import InventoryCountCapability
+from app.capabilities.inventory_workflow import (
+    InventoryAdjustmentCapability, InventoryCountReviewCapability,
+)
 from app.capabilities.packing import PackingCapability
 from app.capabilities.picking import PickCapability
 from app.capabilities.putaway import PutawayCapability
@@ -25,6 +28,7 @@ if TYPE_CHECKING:
     from app.services.outbound.picking import PickingService
     from app.services.inbound.receiving import ReceivingService
     from app.services.outbound.reservation import ReservationService
+    from app.workflows.inventory_count import InventoryCountWorkflow
 
 
 class CapabilityDispatcher:
@@ -36,6 +40,8 @@ class CapabilityDispatcher:
         TaskType.PUTAWAY,
         TaskType.PICK,
         TaskType.INVENTORY_COUNT,
+        TaskType.INVENTORY_COUNT_REVIEW,
+        TaskType.INVENTORY_ADJUSTMENT,
     }
 
     def __init__(
@@ -49,6 +55,7 @@ class CapabilityDispatcher:
         reservation_repository: StockReservationRepository,
         outbound_repository: OutboundOrderRepository,
         inventory_count_service: InventoryCountService,
+        inventory_count_workflow: InventoryCountWorkflow | None = None,
     ) -> None:
         self._capabilities = {
             TaskType.STOCK_IN: StockInCapability(inventory_movement_service),
@@ -70,6 +77,13 @@ class CapabilityDispatcher:
                 inventory_count_service
             ),
         }
+        if inventory_count_workflow is not None:
+            self._capabilities[TaskType.INVENTORY_COUNT_REVIEW] = InventoryCountReviewCapability(
+                inventory_count_workflow
+            )
+            self._capabilities[TaskType.INVENTORY_ADJUSTMENT] = InventoryAdjustmentCapability(
+                inventory_count_workflow
+            )
 
     @classmethod
     def supports(cls, task_type: TaskType) -> bool:

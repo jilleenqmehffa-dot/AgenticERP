@@ -5,6 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.reservation_recommendations import router as reservation_review_router
+from app.api.inventory_adjustments import router as inventory_adjustment_router
 from app.core.config import get_settings
 from app.db.session import create_session_factory, get_db_session
 
@@ -22,6 +23,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AgenticERP", lifespan=lifespan)
 app.include_router(reservation_review_router)
+app.include_router(inventory_adjustment_router)
 
 
 @app.get("/health")

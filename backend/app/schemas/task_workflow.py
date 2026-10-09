@@ -1,8 +1,8 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.contracts.task_execution import (
     InventoryCountResultInput,
@@ -62,6 +62,26 @@ class TaskSubmissionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     form_data: dict[str, Any]
+
+
+class InventoryCountReviewForm(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["APPROVE", "REJECT"]
+    reason: str = Field(min_length=1)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("review reason is required")
+        return value.strip()
+
+
+class InventoryAdjustmentForm(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    remark: str | None = None
 
 
 StockTaskSubmissionForm = StockTaskInput
