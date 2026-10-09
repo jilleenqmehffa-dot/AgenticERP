@@ -215,3 +215,16 @@ class InvalidRecommendationStateError(ValueError):
 
 class RecommendationReviewPermissionError(PermissionError):
     pass
+
+
+class AdjustmentNotFoundError(LookupError):
+    def __init__(self, adjustment_id: int) -> None:
+        super().__init__(f"inventory adjustment not found: {adjustment_id}")
+
+
+class InvalidAdjustmentStateError(ValueError):
+    pass
+
+
+class AdjustmentReviewPermissionError(PermissionError):
+    pass

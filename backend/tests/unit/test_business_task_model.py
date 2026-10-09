@@ -31,6 +31,8 @@ class BusinessTaskModelTests(unittest.TestCase):
                 TaskType.STOCK_OUT,
                 TaskType.TRANSFER,
                 TaskType.INVENTORY_COUNT,
+                TaskType.INVENTORY_COUNT_REVIEW,
+                TaskType.INVENTORY_ADJUSTMENT,
             },
         )
         self.assertEqual(

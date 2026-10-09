@@ -5,6 +5,7 @@ from app.models.business_task import BusinessTask
 from app.models.business_task_item import BusinessTaskItem
 from app.models.employee import Employee
 from app.models.inventory import Inventory
+from app.models.inventory_adjustment import InventoryAdjustment
 from app.models.inventory_count_item import InventoryCountItem
 from app.models.inventory_bucket import InventoryBucket
 from app.models.inbound_receipt import InboundReceipt
@@ -34,6 +35,7 @@ from app.models.warehouse_location import WarehouseLocation
 
 __all__ = [
     "Inventory",
+    "InventoryAdjustment",
     "InventoryBucket",
     "InboundReceipt",
     "InboundReceiptItem",

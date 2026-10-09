@@ -95,6 +95,8 @@ class TaskType(StrEnum):
     STOCK_OUT = "STOCK_OUT"
     TRANSFER = "TRANSFER"
     INVENTORY_COUNT = "INVENTORY_COUNT"
+    INVENTORY_COUNT_REVIEW = "INVENTORY_COUNT_REVIEW"
+    INVENTORY_ADJUSTMENT = "INVENTORY_ADJUSTMENT"
 
 
 class ActorType(StrEnum):
@@ -125,6 +127,13 @@ class ReservationStatus(StrEnum):
     RELEASED = "RELEASED"
     EXPIRED = "EXPIRED"
     CANCELLED = "CANCELLED"
+
+
+class AdjustmentStatus(StrEnum):
+    PENDING_REVIEW = "PENDING_REVIEW"
+    READY_TO_ADJUST = "READY_TO_ADJUST"
+    APPLIED = "APPLIED"
+    REJECTED = "REJECTED"
 
 
 class PurchaseOrderStatus(StrEnum):

@@ -10,6 +10,21 @@ class InventoryBucketRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    async def list_for_location_for_update(
+        self, product_id: int, warehouse_code: str, location_code: str
+    ) -> list[InventoryBucket]:
+        result = await self._session.scalars(
+            select(InventoryBucket)
+            .where(
+                InventoryBucket.product_id == product_id,
+                InventoryBucket.warehouse_code == warehouse_code,
+                InventoryBucket.location_code == location_code,
+            )
+            .order_by(InventoryBucket.id)
+            .with_for_update()
+        )
+        return list(result)
+
     async def get_for_update(
         self,
         product_id: int,

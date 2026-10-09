@@ -50,6 +50,15 @@ class BusinessTaskRepository:
         )
         return list(result)
 
+    async def get_inventory_count_item_for_update(
+        self, count_item_id: int
+    ) -> InventoryCountItem | None:
+        return await self._session.scalar(
+            select(InventoryCountItem)
+            .where(InventoryCountItem.id == count_item_id)
+            .with_for_update()
+        )
+
     async def save_inventory_count_item(
         self,
         item: InventoryCountItem,

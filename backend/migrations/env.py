@@ -18,6 +18,7 @@ from app.models import (  # noqa: F401
     BusinessTaskItem,
     Employee,
     Inventory,
+    InventoryAdjustment,
     InventoryCountItem,
     InventoryBucket,
     InboundReceipt,
